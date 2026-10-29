@@ -82,3 +82,9 @@ The driver brackets its own error codes, the server rejects unknown type labels 
 The driver's protocol crate compiles TypeDB's protobuf definitions while cargo builds it, so building needs `protoc` (or `PROTOC`); a clean Linux machine has none.
 
 - constrains:: [[decisions#Pinned source build]] {strength: must, source: "typedb-protocol 3.14.0 build script", note: "the lakefile checks for protoc before running cargo; CI installs it"}
+
+## German site law
+
+The website is published from Germany, so it needs an Impressum (§ 5 DDG, § 18 Abs. 2 MStV) and a privacy policy (Art. 13 DSGVO), and fonts or scripts loaded from third parties send visitor IP addresses abroad (LG München I, 3 O 17493/20).
+
+- constrains:: [[decisions#Self-hosted site assets and legal pages]] {strength: must, source: "DDG, MStV, DSGVO, TDDDG"}

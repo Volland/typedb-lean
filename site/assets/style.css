@@ -521,3 +521,14 @@ a.post-card { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 1
 .post-card h3 { margin: .4rem 0 .4rem; font-size: 1.25rem; }
 .post-card p { margin: 0; }
 @media (max-width: 640px) { a.post-card { grid-template-columns: 1fr; } .post-card .thumb { aspect-ratio: 16 / 7; } }
+
+/* Footer legal row and legal pages */
+.legal-row {
+  display: flex; justify-content: space-between; align-items: center; gap: .6rem 1.5rem; flex-wrap: wrap;
+  margin-top: 2.2rem; padding-top: 1.3rem; border-top: 1px solid var(--border); font-size: .85rem;
+}
+.legal-row nav { display: flex; gap: 1.2rem; flex-wrap: wrap; }
+.legal-row a[aria-current="page"] { color: var(--accent); }
+.post-body.legal { font-size: 1rem; }
+.post-body.legal h2 { font-size: 1.25rem; margin-top: 2em; }
+.post-body.legal p { overflow-wrap: anywhere; }

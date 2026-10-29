@@ -36,6 +36,7 @@ jobs:
           mkdir -p _site
           cp -R site/. _site/
           cp -R docbuild/.lake/build/doc _site/api
+          scripts/localize-api-docs.sh _site/api
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

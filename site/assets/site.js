@@ -87,6 +87,14 @@
         <li><a href="https://typedb.com/docs">TypeDB docs</a></li>
         <li><a href="https://lean-lang.org/documentation/">Lean docs</a></li>
       </ul></div>
+    </div>
+    <div class="container legal-row">
+      <span>© ${new Date().getFullYear()} Volodymyr Pavlyshyn</span>
+      <nav aria-label="Legal">
+        <a href="${r("impressum.html")}"${page === "legal" && location.pathname.endsWith("impressum.html") ? ' aria-current="page"' : ""}>Impressum</a>
+        <a href="${r("datenschutz.html")}"${page === "legal" && location.pathname.endsWith("datenschutz.html") ? ' aria-current="page"' : ""}>Datenschutz</a>
+        <a href="${r("agb.html")}"${page === "legal" && location.pathname.endsWith("agb.html") ? ' aria-current="page"' : ""}>AGB</a>
+      </nav>
     </div>`;
   body.append(footer);
 

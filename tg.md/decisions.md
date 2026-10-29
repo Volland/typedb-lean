@@ -155,3 +155,12 @@ A release is a tag `vX.Y.Z` on `main`. `release.yaml` checks it against the lake
 - part_of:: [[capabilities#native-driver]]
 
 `scripts/check-versions.sh` keeps the lakefile version, the newest changelog entry and the tag in agreement. A prepared draft release keeps its notes when the tag publishes it. Rejected: publishing build artifacts, since Lake builds from source and the driver from its pinned tag.
+
+## Self-hosted site assets and legal pages
+
+Every page, the API reference included, loads only from the site itself: fonts live in `site/assets/fonts`, and `scripts/localize-api-docs.sh` vendors MathJax and drops doc-gen4's CDN fonts and polyfill.
+
+- motivated_by:: [[constraints#German site law]] {weight: primary}
+- motivated_by:: [[decisions#Static website on GitHub Pages]] {weight: secondary}
+
+`site/impressum.html`, `site/datenschutz.html` and `site/agb.html` are linked from every footer, with a `<noscript>` fallback. The privacy policy describes this setup: GitHub Pages hosting, no cookies or tracking, and a `theme` value in `localStorage`. Rejected: disclosing the CDNs instead of removing them, and a consent banner for a site that needs none.
