@@ -46,6 +46,14 @@ extern_lib typedb_driver_clib pkg := do
   let srcDir := pkg.buildDir / "typedb-driver" / typedbVersion
   let lib := srcDir / "target" / "release" / "libtypedb_driver_clib.a"
   Job.async do
+    -- The driver's protocol crate runs protoc at build time.
+    if (← IO.getEnv "PROTOC").isNone then
+      let found ← try
+          pure ((← IO.Process.output { cmd := "protoc", args := #["--version"] }).exitCode == 0)
+        catch _ => pure false
+      unless found do
+        error "building the TypeDB driver needs protoc, the protobuf compiler (Debian/Ubuntu: \
+          apt-get install protobuf-compiler, macOS: brew install protobuf), or set PROTOC"
     unless ← (srcDir / "Cargo.toml").pathExists do
       IO.FS.createDirAll srcDir.parent.get!
       let cloneArgs := #["clone", "--quiet", "--depth", "1", "--branch", typedbVersion,

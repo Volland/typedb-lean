@@ -20,6 +20,10 @@ First release: a TypeDB 3 client for Lean 4 over the official C driver (typedb-d
 - Versioned up/down migrations with history and checksum drift detection stored in the database.
 - Benchmarks against the official Rust driver (`lake exe bench`), the `social` example, a guide and API docs.
 
+### Requirements
+
+- Building needs a Rust toolchain and `protoc` (the driver's protocol crate compiles protobuf definitions).
+
 ### Known limitations
 
 - typedb-driver 3.14.0 retains about 600 bytes per opened transaction (upstream, also in its Rust API).

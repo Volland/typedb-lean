@@ -8,7 +8,7 @@ Add the package to your `lakefile.lean`:
 require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"
 ```
 
-You need a Rust toolchain (`cargo`): the first `lake build` clones `typedb-driver` at the version in `TYPEDB_VERSION` and builds its C library. That takes about a minute; later builds reuse it. To use a library you built yourself instead, set `TYPEDB_DRIVER_LIB` to the path of `libtypedb_driver_clib.a`.
+You need a Rust toolchain (`cargo`) and `protoc`, the protobuf compiler (`apt-get install protobuf-compiler` or `brew install protobuf`): the first `lake build` clones `typedb-driver` at the version in `TYPEDB_VERSION` and builds its C library. That takes about a minute; later builds reuse it. To use a library you built yourself instead, set `TYPEDB_DRIVER_LIB` to the path of `libtypedb_driver_clib.a`.
 
 ## Run a server
 

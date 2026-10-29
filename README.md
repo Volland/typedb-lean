@@ -48,7 +48,7 @@ Add the package to your `lakefile.lean`:
 require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"
 ```
 
-The first `lake build` clones `typedb-driver` at the version in `TYPEDB_VERSION` (currently 3.14.0) and builds its C library with cargo, so you need a Rust toolchain. To link a library you built yourself instead, set `TYPEDB_DRIVER_LIB=/path/to/libtypedb_driver_clib.a`.
+The first `lake build` clones `typedb-driver` at the version in `TYPEDB_VERSION` (currently 3.14.0) and builds its C library with cargo, so you need a Rust toolchain and `protoc`, the protobuf compiler (`apt-get install protobuf-compiler` or `brew install protobuf`). To link a library you built yourself instead, set `TYPEDB_DRIVER_LIB=/path/to/libtypedb_driver_clib.a`.
 
 Supported platforms are Linux x86_64, Linux arm64 and macOS arm64. Lean is pinned to `v4.35.0`.
 
