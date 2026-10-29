@@ -55,4 +55,4 @@ Results are strict arrays, folds or `for` loops over a stream that cannot leave 
 
 `site/` is the project website, published to GitHub Pages by `.github/workflows/docs.yaml` together with the API reference built in `docbuild/`.
 
-It covers the home page, a usage guide, examples, the benchmark results against the Rust driver and a mini book on TypeDB and Lean, which links to the Leanpub book *TypeDB for Edge AI Agents*. See [[decisions#Static website on GitHub Pages]].
+It covers the home page, a usage guide, examples, the benchmark results against the Rust driver, a mini book on TypeDB and Lean, and a blog with use-case articles; the book and blog link to the Leanpub book *TypeDB for Edge AI Agents*. See [[decisions#Static website on GitHub Pages]].

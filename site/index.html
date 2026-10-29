@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>typedb-lean</title>
   <meta name="description" content="A TypeDB 3 client for Lean 4: typed schemas, typed queries, typed transactions and a lightweight ORM, as fast as the official Rust driver.">
+  <meta property="og:title" content="typedb-lean: typed graphs, typed all the way through">
+  <meta property="og:description" content="A TypeDB 3 client for Lean 4. Schema, queries, transactions and results all checked by the Lean compiler.">
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -12,119 +15,260 @@
 </head>
 <body data-root="." data-page="home">
 
-<section class="hero">
+<!-- Hero ------------------------------------------------------------------------------- -->
+<section class="hero marketing">
   <div class="container hero-grid">
     <div>
-      <div class="eyebrow">TypeDB 3 · Lean 4</div>
-      <h1>Typed graphs, <span class="grad">typed all the way through.</span></h1>
-      <p class="lead">typedb-lean is a TypeDB client for Lean 4. Your schema, your queries, your transactions and your results all have types the Lean compiler checks, and it reads data as fast as the official Rust driver.</p>
+      <div class="badges">
+        <a class="badge new" href="blog/introducing-typedb-lean.html"><span class="dot"></span>v0.1.0 is out: read the announcement →</a>
+      </div>
+      <h1>Typed graphs,<br><span class="grad">typed all the way through.</span></h1>
+      <p class="lead">typedb-lean connects <b>TypeDB 3</b>, the polymorphic graph database, with <b>Lean 4</b>, the language that proves things. Your schema, queries, transactions and results all have types the compiler checks, and it reads data as fast as the official Rust driver.</p>
       <div class="cta">
         <a class="btn primary" href="guide.html">Get started →</a>
-        <a class="btn" href="book/index.html">Read the mini book</a>
-        <a class="btn" href="https://github.com/Volland/typedb-lean">GitHub</a>
+        <a class="btn" href="book/index.html">📖 Read the free mini book</a>
       </div>
-      <div class="install"><span class="muted">lakefile.lean</span><code>require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"</code></div>
+      <div class="install">
+        <span class="muted">lakefile.lean</span>
+        <code>require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"</code>
+        <button class="copy" data-copy='require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"'>Copy</button>
+      </div>
+      <div class="badges" style="margin:1.1rem 0 0">
+        <span class="badge">TypeDB <b>3.14</b></span>
+        <span class="badge">Lean <b>4.35</b></span>
+        <span class="badge">Linux · macOS arm64</span>
+        <span class="badge">Apache-2.0</span>
+      </div>
     </div>
-    <pre><code class="lang-lean">@[typedb "person"]
+
+    <div class="window tabs">
+      <div class="chrome"><i></i><i></i><i></i><span>Social.lean</span></div>
+      <div class="tab-list" role="tablist">
+        <button role="tab">1 · Model</button>
+        <button role="tab">2 · Write</button>
+        <button role="tab">3 · Query</button>
+        <button role="tab">4 · Migrate</button>
+      </div>
+      <div class="tab-panel">
+        <pre><code class="lang-lean">@[typedb "person"]
 structure Person where
   email : Key String          -- owns email @key
-  name  : String
+  name  : String              -- owns name @card(1..1)
   age   : Option Int64 := none
   deriving Entity
 
 structure Friendship where
   a : Role "friend" (Ref Person)
   b : Role "friend" (Ref Person)
-  deriving Relation
-
-def befriend : Tx .write Unit := do
-  let ann ← Entity.insert { email := "ann@example.com", name := "Ann" : Person }
-  let bob ← Entity.insert { email := "bob@example.com", name := "Bob" : Person }
-  discard &lt;| Relation.insert { a := ann, b := bob : Friendship }
-
-def names : Tx .read (Array (Col "n" String)) :=
-  query typeql!"match $p isa person, has name $n;"</code></pre>
-  </div>
-</section>
-
-<section class="band alt">
-  <div class="container">
-    <div class="eyebrow">Why TypeDB and Lean</div>
-    <h2 style="margin-top:0">Two type systems that should meet</h2>
-    <div class="grid cols-2" style="margin-top:1.5rem">
-      <div class="card">
-        <h3>TypeDB types your data</h3>
-        <p>TypeDB is a polymorphic database. Its schema declares entities, relations, attributes and the roles they play, with inheritance, and the server rejects data that does not fit. TypeQL queries are checked against that schema before they run.</p>
+  since : Std.Time.PlainDate
+  deriving Relation</code></pre>
+        <div class="caption">Plain Lean structures become TypeDB entities and relations.</div>
       </div>
-      <div class="card">
-        <h3>Lean types your program</h3>
-        <p>Lean 4 is a functional language and proof assistant with dependent types. Its type checker can carry facts that most languages leave to tests: which transaction may write, which values a query may contain, what shape a row has.</p>
+      <div class="tab-panel">
+        <pre><code class="lang-lean">def befriend : Tx .write Unit := do
+  let ann ← Entity.insert
+    { email := "ann@example.com", name := "Ann" : Person }
+  let bob ← Entity.insert
+    { email := "bob@example.com", name := "Bob" : Person }
+  discard &lt;| Relation.insert
+    { a := ann, b := bob,
+      since := Std.Time.PlainDate.ofYearMonthDayClip 2021 3 14 : Friendship }
+
+-- commits on success, rolls back on any error
+d.runSync "social" .write befriend</code></pre>
+        <div class="caption">A write transaction is its own type, and it commits atomically.</div>
+      </div>
+      <div class="tab-panel">
+        <pre><code class="lang-lean">structure FriendOf where
+  name : String
+  friend : String
+  deriving FromRow
+
+def friendsOf (who : String) : Tx .read (Array FriendOf) :=
+  query typeql!"match
+    $x isa person, has name {who}, has name $name;
+    $f isa friendship, links (friend: $x, friend: $y);
+    $y has name $friend;"</code></pre>
+        <div class="caption"><code>{who}</code> is escaped, so user input can never change the query.</div>
+      </div>
+      <div class="tab-panel">
+        <pre><code class="lang-lean">def migrations : List Migration := [
+  Migration.define 1 "social schema"
+    [TypeSpec.of Person, TypeSpec.of Friendship],
+  Migration.tql 2 "nicknames"
+    "define attribute nickname, value string;
+     person owns nickname;"
+    (down := some "undefine owns nickname from person; nickname;")
+]
+
+let applied ← d.migrateSync "social" migrations
+d.runSync "social" .read (Schema.verify! schema)</code></pre>
+        <div class="caption">Versioned migrations, plus a start-up check that code and database agree.</div>
       </div>
     </div>
-    <p class="muted" style="margin-top:1.5rem;max-width:780px">Most database clients throw both away at the boundary: queries become strings, results become untyped maps, and mistakes show up at run time. typedb-lean keeps the types on both sides and connects them, so a mismatch between your code and your database is caught by the compiler, or once at start-up by schema verification.</p>
   </div>
 </section>
 
+<!-- Metrics -------------------------------------------------------------------------------- -->
+<section style="padding: 0 0 4.5rem">
+  <div class="container">
+    <div class="metrics reveal">
+      <div><b>155k rows/s</b><span>decoded into structures (Rust driver: 142k)</span></div>
+      <div><b>1.05 ms</b><span>point lookup p50, in its own transaction</span></div>
+      <div><b>3 modes</b><span>read, write, schema: checked at compile time</span></div>
+      <div><b>9 / 9</b><span>TypeDB value types mapped to exact Lean types</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- Problem / solution ---------------------------------------------------------------------- -->
+<section class="band alt">
+  <div class="container">
+    <div class="section-head center">
+      <div class="eyebrow">Why it exists</div>
+      <h2>Two type systems should not meet through strings</h2>
+      <p>TypeDB types your data. Lean types your program. Most clients throw both away at the boundary. typedb-lean keeps them and connects them.</p>
+    </div>
+    <div class="compare reveal">
+      <div class="col">
+        <h3>A typical database client</h3>
+        <ul>
+          <li>Queries are strings glued together at run time</li>
+          <li>User input concatenated into a query can rewrite it</li>
+          <li>Results come back as untyped maps or JSON</li>
+          <li>An insert in a read-only transaction fails in production</li>
+          <li>Decimals and durations pass through floats and lose precision</li>
+          <li>Code and schema drift apart silently</li>
+        </ul>
+      </div>
+      <div class="col good">
+        <h3>typedb-lean</h3>
+        <ul>
+          <li><code>typeql!</code> queries carry the transaction mode they need</li>
+          <li>Every interpolated value is escaped by its type's <code>ToTypeQL</code></li>
+          <li>Rows decode straight into your structures with <code>deriving FromRow</code></li>
+          <li>An insert in a <code>Tx .read</code> does not compile</li>
+          <li><code>Decimal</code>, <code>Duration</code> and <code>Std.Time</code> keep values exact</li>
+          <li><code>Schema.verify!</code> fails fast at start-up if they differ</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Types everywhere: flow -------------------------------------------------------------------- -->
 <section class="band">
   <div class="container">
-    <div class="eyebrow">Types everywhere</div>
-    <h2 style="margin-top:0">One definition, checked on both sides</h2>
-    <p class="lead">A Lean structure is the source of truth. It generates the TypeQL schema, decodes rows, and is verified against the live database.</p>
-    <div class="bridge">
-      <div class="side">
-        <h4>Lean 4</h4>
-        <pre><code class="lang-lean">structure Employee extends Person where
-  company : String
-  salary  : Decimal
-  deriving Entity
-
-structure Endorsement where
-  endorsed : Role "endorsed" (Ref Friendship)
-  endorser : Role "endorser" (Ref Person)
-  deriving Relation</code></pre>
-      </div>
-      <div class="arrows">
-        <span>Schema.defineText →</span>
-        <span>← Entity.get?</span>
-        <span>Schema.verify! ⇄</span>
-      </div>
-      <div class="side">
-        <h4>TypeDB schema</h4>
-        <pre><code class="lang-typeql">define
-  attribute company, value string;
-  attribute salary, value decimal;
-  entity employee, sub person,
-    owns company @card(1..1),
-    owns salary @card(1..1);
-  relation endorsement,
-    relates endorsed, relates endorser;
-  friendship plays endorsement:endorsed;
-  person plays endorsement:endorser;</code></pre>
-      </div>
+    <div class="section-head">
+      <div class="eyebrow">Types everywhere</div>
+      <h2>One definition, checked on both sides</h2>
+      <p>A Lean structure is the single source of truth. It generates the schema, decodes rows, and is verified against the live database.</p>
     </div>
+    <div class="flow reveal" style="overflow-x:auto">
+      <svg viewBox="0 0 960 250" role="img" aria-label="A Lean structure generates the TypeQL schema, which is defined in TypeDB; rows decode back into Lean values; Schema.verify! checks the database against the structure." style="min-width:640px">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+          </marker>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2)"/>
+          </marker>
+        </defs>
+        <rect class="box hl" x="10" y="60" width="190" height="84" rx="12" stroke-width="1.6"/>
+        <text x="105" y="96" text-anchor="middle">Lean structure</text>
+        <text class="sub" x="105" y="118" text-anchor="middle">deriving Entity</text>
 
-    <div class="grid cols-3" style="margin-top:2.5rem">
-      <div class="card"><div class="icon">Tx</div><h3>Typed transactions</h3><p><code>Tx .read α</code>, <code>Tx .write α</code> and <code>Tx .schema α</code> are different types. An insert inside a read transaction does not compile.</p></div>
-      <div class="card"><div class="icon">{}</div><h3>Typed queries</h3><p><code>typeql!"… {value} …"</code> escapes every value through <code>ToTypeQL</code>, and reads the query's mode off its text. User data cannot change a query's structure.</p></div>
-      <div class="card"><div class="icon">⟨⟩</div><h3>Typed results</h3><p>Rows decode straight into structures with <code>deriving FromRow</code>; fetch documents through <code>FromJson</code>. A wrong column type is a typed <code>decode</code> error.</p></div>
-      <div class="card"><div class="icon">=</div><h3>Exact values</h3><p><code>decimal</code> is an exact <code>Decimal</code>, dates are <code>Std.Time</code>, <code>duration</code> keeps months, days and nanoseconds apart. Nothing is rounded through a float.</p></div>
-      <div class="card"><div class="icon">ORM</div><h3>A lightweight ORM</h3><p><code>deriving Entity</code> and <code>deriving Relation</code>: inserts, reads, updates, deletes, subtypes, relations in roles, polymorphic reads.</p></div>
-      <div class="card"><div class="icon">↑↓</div><h3>Migrations</h3><p>Versioned up and down steps with history and checksums stored in the database. A step can change the schema and backfill data atomically.</p></div>
+        <rect class="box" x="260" y="60" width="190" height="84" rx="12"/>
+        <text x="355" y="96" text-anchor="middle">TypeQL schema</text>
+        <text class="sub" x="355" y="118" text-anchor="middle">Schema.defineText</text>
+
+        <rect class="box" x="510" y="60" width="190" height="84" rx="12"/>
+        <text x="605" y="96" text-anchor="middle">TypeDB 3</text>
+        <text class="sub" x="605" y="118" text-anchor="middle">server checks data</text>
+
+        <rect class="box hl" x="760" y="60" width="190" height="84" rx="12" stroke-width="1.6"/>
+        <text x="855" y="96" text-anchor="middle">Lean values</text>
+        <text class="sub" x="855" y="118" text-anchor="middle">FromRow · Entity.get?</text>
+
+        <path class="edge" d="M200 102 H256" marker-end="url(#arr)"/>
+        <text class="lbl" x="228" y="88" text-anchor="middle">generates</text>
+        <path class="edge" d="M450 102 H506" marker-end="url(#arr)"/>
+        <text class="lbl" x="478" y="88" text-anchor="middle">define</text>
+        <path class="edge" d="M700 102 H756" marker-end="url(#arr)"/>
+        <text class="lbl" x="728" y="88" text-anchor="middle">rows</text>
+
+        <path class="edge alt" d="M605 144 C605 225, 105 225, 105 148" marker-end="url(#arr2)" stroke-dasharray="5 5"/>
+        <text class="lbl" x="355" y="222" text-anchor="middle">Schema.verify! at start-up: missing types, wrong value types, missing roles</text>
+
+        <text class="lbl" x="105" y="40" text-anchor="middle">compile time</text>
+        <text class="lbl" x="605" y="40" text-anchor="middle">run time</text>
+        <path d="M480 22 V180" stroke="var(--border)" stroke-dasharray="3 5"/>
+      </svg>
     </div>
   </div>
 </section>
 
+<!-- Features ------------------------------------------------------------------------------- -->
 <section class="band alt">
   <div class="container">
-    <div class="grid cols-2" style="align-items:center;gap:2.5rem">
-      <div>
+    <div class="section-head center">
+      <div class="eyebrow">Features</div>
+      <h2>Everything you need, nothing you don't</h2>
+      <p>Small, composable layers over TypeDB's official driver.</p>
+    </div>
+    <div class="grid cols-3">
+      <div class="card feature reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Typed transactions</h3>
+        <p><code>Tx .read</code>, <code>Tx .write</code> and <code>Tx .schema</code> are different types. A query that needs more than its transaction allows does not compile.</p>
+        <a class="more" href="book/05-types-everywhere.html">How the modes work →</a>
+      </div>
+      <div class="card feature reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>Injection-safe queries</h3>
+        <p><code>typeql!"… {value} …"</code> renders every value through <code>ToTypeQL</code>. A value with no rendering is a compile error, never a string concatenation.</p>
+        <a class="more" href="guide.html#queries">Typed queries →</a>
+      </div>
+      <div class="card feature reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+        <h3>Typed results</h3>
+        <p>Rows decode into structures with <code>deriving FromRow</code>; fetch documents through <code>FromJson</code>. Stream millions of rows in constant memory.</p>
+        <a class="more" href="guide.html#decoding">Decoding →</a>
+      </div>
+      <div class="card feature reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="19" r="2.5"/><path d="M12 9l3 3-3 3-3-3z"/><path d="M8 8l2 2M16 8l-2 2M12 15v1.5"/></svg></div>
+        <h3>A lightweight ORM</h3>
+        <p><code>deriving Entity</code> and <code>deriving Relation</code>: inserts, reads, updates, deletes, subtypes, relations that play roles, polymorphic reads.</p>
+        <a class="more" href="guide.html#orm">The ORM →</a>
+      </div>
+      <div class="card feature reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 10l7-7 7 7"/><path d="M5 21h14"/></svg></div>
+        <h3>Migrations</h3>
+        <p>Versioned up and down steps, with history and checksums kept in the database. One step can change the schema and backfill data atomically.</p>
+        <a class="more" href="guide.html#migrations">Migrations →</a>
+      </div>
+      <div class="card feature reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4l3-8 4 16 3-8h2"/></svg></div>
+        <h3>Async and fast</h3>
+        <p><code>Driver.run</code> returns a <code>Std.Async</code> computation on its own thread. Batched decoding matches the Rust driver on scans and lookups.</p>
+        <a class="more" href="benchmarks.html">Benchmarks →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Compile errors -------------------------------------------------------------------------- -->
+<section class="band">
+  <div class="container">
+    <div class="grid cols-2" style="align-items:center;gap:3rem">
+      <div class="reveal">
         <div class="eyebrow">Mistakes become compile errors</div>
         <h2 style="margin-top:0">The compiler knows what a transaction may do</h2>
-        <p>Every query carries the weakest transaction mode that may run it, inferred from its text: <code>define</code> needs schema, <code>insert</code> needs write, a <code>match</code> needs only read. Every operation asks for a proof that the current mode allows it.</p>
-        <p>Read helpers lift into write transactions on their own, and a helper can be generic over any mode strong enough to run it.</p>
-        <a class="btn" href="book/05-types-everywhere.html">How it works →</a>
+        <p>Every query carries the weakest transaction mode that may run it, read off its text: <code>define</code> needs schema, <code>insert</code> needs write, <code>match</code> needs read. Every operation asks the compiler for evidence that the current mode allows it.</p>
+        <p>Read helpers lift into write transactions on their own, and you can write helpers that work in any mode strong enough to run them.</p>
+        <a class="btn" href="blog/five-bugs-the-compiler-catches.html">5 bugs the compiler catches →</a>
       </div>
-      <div>
+      <div class="reveal">
         <pre><code class="lang-lean">def broken : Tx .read Unit :=
   exec typeql!"match $p isa person; insert $p has name \"x\";"</code></pre>
         <pre><code class="lang-text">error: failed to synthesize instance of type class
@@ -132,59 +276,186 @@ structure Endorsement where
         <pre><code class="lang-lean">structure Secret where
   x : Nat
 
-example (v : Secret) : Query .read := typeql!"match $p has id {v};"
--- error: failed to synthesize instance of type class
---   ToTypeQL Secret</code></pre>
+example (v : Secret) : Query .read := typeql!"match $p has id {v};"</code></pre>
+        <pre><code class="lang-text">error: failed to synthesize instance of type class
+  ToTypeQL Secret</code></pre>
       </div>
     </div>
   </div>
 </section>
 
-<section class="band">
-  <div class="container">
-    <div class="eyebrow">Performance</div>
-    <h2 style="margin-top:0">As fast as the official Rust driver</h2>
-    <p class="lead">The same workloads, the same server, the same driver version. Rows are decoded into Lean structures in batches, many per native call.</p>
-    <div class="stats">
-      <div class="stat"><b>155k rows/s</b><span>scan into structures<br>Rust: 142k rows/s</span></div>
-      <div class="stat"><b>1.05 ms</b><span>point lookup p50<br>Rust: 1.03 ms</span></div>
-      <div class="stat"><b>1.52 ms</b><span>point lookup p99<br>Rust: 2.39 ms</span></div>
-      <div class="stat"><b>367 ms</b><span>16 concurrent reads<br>Rust: 607 ms</span></div>
-    </div>
-    <a class="btn" href="benchmarks.html">See the full benchmark →</a>
-  </div>
-</section>
-
+<!-- Use cases ------------------------------------------------------------------------------ -->
 <section class="band alt">
   <div class="container">
-    <div class="eyebrow">Architecture</div>
-    <h2 style="margin-top:0">Small layers over the official driver</h2>
-    <div class="layers">
-      <div class="layer"><b>ORM and migrations</b><span><code>deriving Entity</code>, <code>deriving Relation</code>, <code>Polymorphic</code>, <code>Schema.verify</code>, <code>Migration</code></span></div>
-      <div class="layer"><b>Decoding</b><span><code>RowDecoder</code>, <code>deriving FromRow</code>, batched native reads, streams that cannot escape their transaction</span></div>
-      <div class="layer"><b>Typed TypeQL</b><span><code>typeql!</code> with escaped interpolation and an inferred <code>Query m</code> mode</span></div>
-      <div class="layer"><b>Transactions</b><span><code>Tx m α</code>, commit or roll back, conflict retry, <code>Std.Async</code> on dedicated threads</span></div>
-      <div class="layer"><b>Native</b><span>a C shim over TypeDB's official C driver, built from source by <code>lake</code></span></div>
+    <div class="section-head center">
+      <div class="eyebrow">Use cases</div>
+      <h2>Built for data with real structure</h2>
+      <p>TypeDB shines where relations have roles, data has subtypes, and correctness matters. Lean makes sure your code agrees.</p>
+    </div>
+    <div class="grid cols-2">
+      <a class="card usecase reveal" href="blog/typed-memory-for-ai-agents.html">
+        <div class="kicker">AI agents</div>
+        <h3>Typed memory for agents</h3>
+        <p>Observations, beliefs, provenance, time and contradictions as a typed graph instead of a JSON blob. Recall with typed queries, and write atomically from many agent threads.</p>
+        <p style="margin-top:.8rem;color:var(--accent);font-weight:600">Read the use case →</p>
+      </a>
+      <div class="card usecase reveal">
+        <div class="kicker">Knowledge graphs</div>
+        <h3>Research and domain knowledge</h3>
+        <p>N-ary relations, relations that play roles in other relations, and subtype hierarchies map to Lean structures with <code>Role</code>, <code>Ref</code> and <code>extends</code>. Polymorphic reads decode each instance into its own type.</p>
+      </div>
+      <div class="card usecase reveal">
+        <div class="kicker">Finance</div>
+        <h3>Ledgers and balances</h3>
+        <p>An exact <code>Decimal</code> with 19 fractional digits, durations that keep months and days apart, and a retry policy that re-runs a transfer only when its commit loses a conflict.</p>
+      </div>
+      <div class="card usecase reveal">
+        <div class="kicker">Policies</div>
+        <h3>Access control and rules</h3>
+        <p>Who may do what, through which role, under which grant. Model it as relations, encode the rules in TypeQL functions, and keep the queries that check them injection-safe.</p>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="band">
+<!-- Learn: mini book --------------------------------------------------------------------- -->
+<section class="band" id="learn">
   <div class="container">
-    <div class="grid cols-2" style="gap:2rem;align-items:start">
-      <div>
-        <div class="eyebrow">Learn</div>
-        <h2 style="margin-top:0">A mini book: TypeDB and Lean together</h2>
-        <p>Seven short chapters: the basics of TypeDB and TypeQL, just enough Lean, modeling a domain in both, how the types connect, and building a real application with migrations.</p>
-        <a class="btn primary" href="book/index.html">Start reading →</a>
+    <div class="section-head center">
+      <div class="eyebrow">Learn</div>
+      <h2>New to TypeDB or Lean? Start with the mini book</h2>
+      <p>A free, seven-chapter introduction to typed graphs. No prior TypeDB or Lean knowledge needed.</p>
+    </div>
+    <div class="card bookcard reveal">
+      <div class="left">
+        <div class="eyebrow" style="color:rgba(255,255,255,.8)">Free · 7 chapters · on this site</div>
+        <h3>Typed Graphs: TypeDB and Lean Together</h3>
+        <p>From the PERA model and TypeQL to dependent types, domain modeling, and a complete application with migrations. Every example compiles against the library, and every TypeQL query ran on a real TypeDB 3 server.</p>
+        <a class="btn" href="book/index.html">Start reading →</a>
       </div>
-      <div class="card book-promo">
+      <ol>
+        <li><a href="book/01-why.html">Why TypeDB and Lean</a></li>
+        <li><a href="book/02-typedb-basics.html">TypeDB basics: the PERA model and TypeQL</a></li>
+        <li><a href="book/03-lean-basics.html">Just enough Lean</a></li>
+        <li><a href="book/04-modeling.html">Modeling a domain in both</a></li>
+        <li><a href="book/05-types-everywhere.html">Types everywhere</a></li>
+        <li><a href="book/06-queries-and-transactions.html">Queries, transactions and effects</a></li>
+        <li><a href="book/07-building-an-app.html">Building an app</a></li>
+      </ol>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:1.2rem">
+      <div class="card book-promo reveal">
         <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
         <div>
-          <h3>Go deeper with the full book</h3>
+          <h3>Go deeper: the full book</h3>
           <p><em>TypeDB for Edge AI Agents</em> covers TypeDB's model, TypeQL, and using a typed knowledge graph as memory for AI agents.</p>
           <p style="margin-top:.8rem"><a href="https://leanpub.com/typedbforedgeaiagents">Get it on Leanpub →</a></p>
         </div>
+      </div>
+      <div class="card reveal">
+        <h3 style="margin-top:.2rem">From the blog</h3>
+        <ul style="list-style:none;padding:0;margin:.6rem 0 0">
+          <li style="padding:.45rem 0;border-bottom:1px solid var(--border)"><a href="blog/typed-memory-for-ai-agents.html">Typed memory for AI agents with TypeDB and Lean</a></li>
+          <li style="padding:.45rem 0;border-bottom:1px solid var(--border)"><a href="blog/five-bugs-the-compiler-catches.html">Five database bugs the compiler catches</a></li>
+          <li style="padding:.45rem 0"><a href="blog/introducing-typedb-lean.html">Introducing typedb-lean</a></li>
+        </ul>
+        <p style="margin-top:.8rem"><a href="blog/index.html">All posts →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Get started ----------------------------------------------------------------------- -->
+<section class="band alt">
+  <div class="container">
+    <div class="section-head center">
+      <div class="eyebrow">Get started</div>
+      <h2>Up and running in three steps</h2>
+      <p>You need Lean 4 (via elan), a Rust toolchain, <code>protoc</code> and Docker.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <h3>Add the package</h3>
+        <p class="muted">The first build compiles TypeDB's C driver; later builds reuse it.</p>
+        <pre><code class="lang-lean">require «typedb-lean» from git
+  "https://github.com/Volland/typedb-lean" @ "v0.1.0"</code></pre>
+      </div>
+      <div class="step reveal">
+        <h3>Start TypeDB</h3>
+        <p class="muted">The default credentials are <code>admin</code> / <code>password</code>.</p>
+        <pre><code class="lang-sh">docker run -d --name typedb \
+  -p 1729:1729 typedb/typedb:3.14.0</code></pre>
+      </div>
+      <div class="step reveal">
+        <h3>Connect and query</h3>
+        <p class="muted">Everything returns <code>EIO TypeDBError α</code>.</p>
+        <pre><code class="lang-lean">Driver.withDriver
+  { address := "127.0.0.1:1729" } fun d => do
+  d.ensureDatabase "hello"
+  d.runSync "hello" .read (query …)</code></pre>
+      </div>
+    </div>
+    <p style="text-align:center;margin-top:2rem"><a class="btn primary" href="guide.html">Read the docs →</a> <a class="btn" href="examples.html">Browse examples</a></p>
+  </div>
+</section>
+
+<!-- Performance ------------------------------------------------------------------------- -->
+<section class="band">
+  <div class="container">
+    <div class="grid cols-2" style="align-items:center;gap:3rem">
+      <div class="reveal">
+        <div class="eyebrow">Performance</div>
+        <h2 style="margin-top:0">As fast as the official Rust driver</h2>
+        <p>Same workloads, same server, same driver version. A decoder knows its columns, so one native call returns hundreds of rows at a time. The benchmark runs in CI and fails if the scan drops below 80% of Rust's throughput.</p>
+        <a class="btn" href="benchmarks.html">See the full benchmark →</a>
+      </div>
+      <div class="bench reveal">
+        <div class="bench-row">
+          <header><h3>Scan, rows/s</h3><span class="verdict">1.09×</span></header>
+          <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">155,368</span></div>
+          <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:91.4%"></div></div><span class="val">142,061</span></div>
+        </div>
+        <div class="bench-row">
+          <header><h3>16 concurrent reads</h3><span class="verdict">1.65× faster</span></header>
+          <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:60.5%"></div></div><span class="val">367 ms</span></div>
+          <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">607 ms</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ --------------------------------------------------------------------------------- -->
+<section class="band alt">
+  <div class="container" style="max-width:820px">
+    <div class="section-head center">
+      <div class="eyebrow">FAQ</div>
+      <h2>Questions</h2>
+    </div>
+    <div class="faq">
+      <details><summary>Do I need to know TypeDB already?</summary><p>No. Chapter 2 of the <a href="book/02-typedb-basics.html">mini book</a> teaches entities, relations, attributes, roles and TypeQL from scratch, with queries you can run.</p></details>
+      <details><summary>Do I need to know Lean already?</summary><p>Basic functional programming helps. Chapter 3, <a href="book/03-lean-basics.html">Just enough Lean</a>, covers structures, type classes, <code>do</code> notation and the bit of dependent typing the library uses.</p></details>
+      <details><summary>Which TypeDB versions are supported?</summary><p>TypeDB 3.x. The library builds the official C driver at a pinned version (currently 3.14.0), and its integration tests run against a <code>typedb/typedb</code> container of that version.</p></details>
+      <details><summary>Which platforms?</summary><p>Linux x86_64, Linux arm64 and macOS arm64, with Lean <code>v4.35.0</code>. Building needs a Rust toolchain and <code>protoc</code>, or a prebuilt driver library via <code>TYPEDB_DRIVER_LIB</code>.</p></details>
+      <details><summary>Can I connect to a remote server with TLS?</summary><p>Yes. <code>Config</code> takes <code>username</code>, <code>password</code>, and <code>tls := .system</code> or <code>.rootCA path</code>.</p></details>
+      <details><summary>Is it ready for production?</summary><p>v0.1.0 is the first release. It has unit tests, compile-time checks and integration tests against a real server in CI on every push, and benchmarks with enforced targets. Try it, and report what you find on <a href="https://github.com/Volland/typedb-lean/issues">GitHub</a>.</p></details>
+      <details><summary>How is it licensed?</summary><p>Apache-2.0.</p></details>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -------------------------------------------------------------------------------- -->
+<section style="padding:4.5rem 0">
+  <div class="container">
+    <div class="cta-band reveal">
+      <img src="assets/logo.svg" alt="" width="64" height="64" style="margin-bottom:1rem">
+      <h2>Make your database speak Lean</h2>
+      <p>Typed schemas, typed queries, typed transactions and typed results, from a single definition.</p>
+      <div class="cta">
+        <a class="btn primary" href="guide.html">Get started</a>
+        <a class="btn" href="book/index.html">Read the mini book</a>
+        <a class="btn" href="https://github.com/Volland/typedb-lean">Star on GitHub</a>
       </div>
     </div>
   </div>

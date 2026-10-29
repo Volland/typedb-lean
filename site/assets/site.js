@@ -23,24 +23,32 @@
   }
 
   const links = [
-    ["home", "index.html", "Home"],
-    ["guide", "guide.html", "Guide"],
+    ["guide", "guide.html", "Docs"],
     ["examples", "examples.html", "Examples"],
+    ["book", "book/index.html", "Mini book"],
+    ["blog", "blog/index.html", "Blog"],
     ["benchmarks", "benchmarks.html", "Benchmarks"],
-    ["book", "book/index.html", "Book"],
     ["api", "api/TypeDB.html", "API"],
   ];
+  const logo = `<img class="logo" src="${r("assets/logo.svg")}" alt="" width="30" height="30">`;
+  const ghIcon = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+
+  if (!document.querySelector("link[rel=icon]")) {
+    const icon = document.createElement("link");
+    icon.rel = "icon"; icon.type = "image/svg+xml"; icon.href = r("assets/logo.svg");
+    document.head.append(icon);
+  }
 
   const header = document.createElement("header");
   header.className = "site-header";
   header.innerHTML = `
     <div class="inner">
-      <a class="brand" href="${r("index.html")}"><span class="logo">λ</span>typedb-lean</a>
+      <a class="brand" href="${r("index.html")}">${logo}<span>typedb-lean</span></a>
       <button class="menu-toggle" aria-label="Menu" aria-expanded="false">☰</button>
       <nav class="nav">
         ${links.map(([id, href, label]) =>
           `<a href="${r(href)}"${id === page ? ' aria-current="page"' : ""}>${label}</a>`).join("")}
-        <a href="${REPO}">GitHub</a>
+        <a class="nav-gh" href="${REPO}">${ghIcon}<span>GitHub</span></a>
         <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
       </nav>
     </div>`;
@@ -58,13 +66,14 @@
   footer.innerHTML = `
     <div class="container cols">
       <div>
-        <a class="brand" href="${r("index.html")}"><span class="logo">λ</span>typedb-lean</a>
+        <a class="brand" href="${r("index.html")}">${logo}<span>typedb-lean</span></a>
         <p style="margin-top:.8rem">A TypeDB 3 client for Lean 4, built on the official C driver. Apache-2.0.</p>
       </div>
       <div><h4>Learn</h4><ul>
-        <li><a href="${r("guide.html")}">Guide</a></li>
+        <li><a href="${r("guide.html")}">Docs</a></li>
         <li><a href="${r("examples.html")}">Examples</a></li>
         <li><a href="${r("book/index.html")}">The mini book</a></li>
+        <li><a href="${r("blog/index.html")}">Blog</a></li>
         <li><a href="${r("api/TypeDB.html")}">API reference</a></li>
       </ul></div>
       <div><h4>Project</h4><ul>
@@ -154,4 +163,35 @@
     code.innerHTML = highlight(code.textContent.replace(/^\n/, ""), lang);
     code.parentElement.dataset.lang = names[lang] || lang;
   });
+
+  // ---- Tabs: <div class="tabs"><div class="tab-list"><button>…</button></div><div class="tab-panel">…</div></div>
+  document.querySelectorAll(".tabs").forEach((tabs) => {
+    const buttons = [...tabs.querySelectorAll(".tab-list button")];
+    const panels = [...tabs.querySelectorAll(".tab-panel")];
+    const show = (i) => {
+      buttons.forEach((b, j) => b.setAttribute("aria-selected", i === j));
+      panels.forEach((p, j) => { p.hidden = i !== j; });
+    };
+    buttons.forEach((b, i) => b.addEventListener("click", () => show(i)));
+    show(0);
+  });
+
+  // ---- Copy buttons: <button class="copy" data-copy="text">
+  document.querySelectorAll("button.copy").forEach((b) => {
+    b.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(b.dataset.copy);
+        b.classList.add("done");
+        setTimeout(() => b.classList.remove("done"), 1500);
+      } catch (_) {}
+    });
+  });
+
+  // ---- Reveal on scroll, skipped when the viewer prefers less motion.
+  if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const io = new IntersectionObserver((entries) => entries.forEach((e) => {
+      if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+    }), { rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal").forEach((el) => { el.classList.add("pre"); io.observe(el); });
+  }
 })();

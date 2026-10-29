@@ -141,11 +141,11 @@ On macOS the build links CoreFoundation and Security through minimal TAPI stubs 
 
 ## Static website on GitHub Pages
 
-`site/` is plain HTML, CSS and JavaScript with no build step; `docs.yaml` publishes it with the doc-gen4 API reference under `api/`. It holds the home page, the guide, examples, benchmarks and a mini book.
+`site/` is plain HTML, CSS and JavaScript with no build step; `docs.yaml` publishes it with the doc-gen4 API reference under `api/`. It holds the home page, docs, examples, benchmarks, a mini book and a blog.
 
 - motivated_by:: [[decisions#Benchmarks against the Rust driver]] {weight: secondary, note: "the benchmarks page reports its results"}
 
-Shared header, footer and code highlighting come from `site/assets/site.js`. Lean snippets on the site that are not copied from the guide or the example are compile-checked against the library before publishing. Rejected: a static site generator, which would add a toolchain to CI for a handful of pages.
+Shared header, footer, code highlighting, tabs and copy buttons come from `site/assets/site.js`; the logo is `site/assets/logo.svg`, three entities joined by a relation diamond holding a λ. Lean snippets on the site that are not copied from the guide or the example are compile-checked against the library before publishing. Rejected: a static site generator, which would add a toolchain to CI for a handful of pages.
 
 ## Releases from version tags
 

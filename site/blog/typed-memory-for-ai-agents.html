@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Typed memory for AI agents · typedb-lean</title>
+  <meta name="description" content="Model an AI agent's memory as a typed graph: observations, beliefs, evidence, time, confidence and contradictions in TypeDB, with Lean checking the code that reads and writes them.">
+  <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="blog">
+<header class="post-hero"><div class="inner">
+  <a href="index.html" class="small">← All posts</a>
+  <div class="eyebrow" style="margin-top:1rem">Use case</div>
+  <h1>Typed memory for AI agents with TypeDB and Lean</h1>
+  <p class="lead">An agent's memory is a database, so it should have a schema. This post models observations, beliefs, evidence, time, confidence and contradictions in TypeDB, and lets Lean check the code that reads and writes them.</p>
+  <div class="post-meta"><span>October 29, 2026</span><span>·</span><span>14 min read</span><span class="tag">AI agents</span><span class="tag">Modeling</span><span class="tag">Use case</span></div>
+</div></header>
+<article class="post-body">
+
+<p>An agent that runs for more than one conversation needs to remember things. The usual first attempts are to keep the chat history in the context window, to embed text chunks into a vector store, or to save a JSON document per session. All three are good at one question: <em>find me text that looks like this</em>.</p>
+
+<p>Agents soon have to answer other questions, though:</p>
+<ul>
+  <li>Where did I learn this, and when?</li>
+  <li>How sure am I, and how sure was the source?</li>
+  <li>Does anything I know contradict it?</li>
+  <li>Which of my beliefs have no evidence behind them?</li>
+  <li>Do two agents on the same team believe incompatible things?</li>
+</ul>
+<p>Those are questions about <strong>relationships between facts</strong>, not about text similarity. They need a model with types: what kinds of things exist, how they relate, and what each relationship carries. This post builds such a model with <a href="https://typedb.com">TypeDB</a>, a database whose schema is a type system, and <a href="../index.html">typedb-lean</a>, which makes the Lean compiler check every query and transaction against it.</p>
+
+<h2 id="needs">What memory needs</h2>
+<p>Strip away the language model, and an agent's memory has six requirements:</p>
+<ol>
+  <li><strong>Facts are things.</strong> An observation has an identity, so it can be referenced, supported, contradicted or retracted. A sentence in a text blob can't be.</li>
+  <li><strong>Provenance.</strong> Every belief points at the observation it came from. Later, other observations can count as evidence for it.</li>
+  <li><strong>Time.</strong> When something was observed, and since when an agent has held it. "The bridge is closed" was true on Tuesday.</li>
+  <li><strong>Confidence, exactly.</strong> Thresholds such as "act only on beliefs at 0.8 or above" have to compare correctly. A <code>0.1</code> stored as a binary float is <code>0.1000000000000000055…</code>.</li>
+  <li><strong>Relations between facts.</strong> Support and contradiction relate observations and beliefs, not strings.</li>
+  <li><strong>Many agents.</strong> Several agents share one memory, and each holds its own beliefs.</li>
+</ol>
+
+<h2 id="why-typed">Why a typed graph</h2>
+<div class="compare">
+  <div class="col">
+    <h3>Vector store or JSON blob</h3>
+    <ul>
+      <li>Facts are text chunks, with no identity to point at</li>
+      <li>Provenance and time live in free-form metadata, if anywhere</li>
+      <li>"Contradicts" and "supports" are not representable, only nearby</li>
+      <li>Confidence is a float in a dictionary</li>
+      <li>The shape of a record is whatever the last writer wrote</li>
+    </ul>
+  </div>
+  <div class="col good">
+    <h3>Typed graph in TypeDB</h3>
+    <ul>
+      <li>Observations are entities with a key</li>
+      <li>Beliefs are relations that carry the time they were adopted</li>
+      <li>Support and contradiction are relations, and a relation can play a role in another one</li>
+      <li>Confidence is an exact <code>decimal</code></li>
+      <li>The server rejects data that does not fit the schema</li>
+    </ul>
+  </div>
+</div>
+<p>This doesn't replace embeddings. Fuzzy recall ("anything about bridges?") is what vectors are for, and an embedding index can store observation keys next to its vectors. The typed graph is where the agent keeps what it <em>knows</em>, why it knows it, and how the pieces fit together.</p>
+
+<h2 id="model">The model</h2>
+<p>We have three entity types and four relation types. Entities are drawn as circles and relations as diamonds, as in an entity-relationship diagram.</p>
+
+<figure>
+<svg viewBox="0 0 760 380" width="100%" role="img" aria-label="Memory model: agent, observation and topic entities joined by belief, mention, support and contradiction relations">
+  <style>
+    .mm-ent { fill: var(--surface); stroke: var(--accent); stroke-width: 2.2; }
+    .mm-rel { fill: var(--surface); stroke: var(--accent-2); stroke-width: 2.2; }
+    .mm-edge { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+    .mm-name { fill: var(--text); font: 700 14px Inter, system-ui, sans-serif; text-anchor: middle; }
+    .mm-attr { fill: var(--muted); font: 500 10.5px "JetBrains Mono", ui-monospace, monospace; text-anchor: middle; }
+    .mm-role { fill: var(--accent-2); font: 600 11px Inter, system-ui, sans-serif; text-anchor: middle; }
+  </style>
+  <!-- edges -->
+  <line class="mm-edge" x1="142" y1="110" x2="200" y2="110"/>
+  <line class="mm-edge" x1="296" y1="110" x2="338" y2="110"/>
+  <line class="mm-edge" x1="422" y1="110" x2="470" y2="110"/>
+  <line class="mm-edge" x1="566" y1="110" x2="618" y2="110"/>
+  <line class="mm-edge" x1="248" y1="144" x2="248" y2="232"/>
+  <line class="mm-edge" x1="282" y1="266" x2="350" y2="140"/>
+  <path class="mm-edge" d="M380 152 C 390 200, 470 220, 470 236"/>
+  <path class="mm-edge" d="M396 146 C 440 180, 520 210, 516 240"/>
+  <!-- role labels -->
+  <text class="mm-role" x="171" y="100">holder</text>
+  <text class="mm-role" x="317" y="100">content</text>
+  <text class="mm-role" x="446" y="100">source</text>
+  <text class="mm-role" x="592" y="100">topic</text>
+  <text class="mm-role" x="278" y="196">supported</text>
+  <text class="mm-role" x="336" y="214">evidence</text>
+  <text class="mm-role" x="420" y="214">claim</text>
+  <text class="mm-role" x="532" y="206">claim</text>
+  <!-- entities -->
+  <circle class="mm-ent" cx="100" cy="110" r="42"/>
+  <text class="mm-name" x="100" y="115">agent</text>
+  <text class="mm-attr" x="100" y="172">name @key</text>
+  <circle class="mm-ent" cx="380" cy="110" r="42"/>
+  <text class="mm-name" x="380" y="115">observation</text>
+  <text class="mm-attr" x="380" y="30">id @key · text</text>
+  <text class="mm-attr" x="380" y="46">observed-at · confidence</text>
+  <circle class="mm-ent" cx="660" cy="110" r="42"/>
+  <text class="mm-name" x="660" y="115">topic</text>
+  <text class="mm-attr" x="660" y="172">name @key</text>
+  <!-- relations -->
+  <path class="mm-rel" d="M248 76 L296 110 L248 144 L200 110 Z"/>
+  <text class="mm-name" x="248" y="115">belief</text>
+  <text class="mm-attr" x="248" y="62">since</text>
+  <path class="mm-rel" d="M518 76 L566 110 L518 144 L470 110 Z"/>
+  <text class="mm-name" x="518" y="115">mention</text>
+  <path class="mm-rel" d="M248 232 L296 266 L248 300 L200 266 Z"/>
+  <text class="mm-name" x="248" y="271">support</text>
+  <text class="mm-attr" x="248" y="320">weight</text>
+  <path class="mm-rel" d="M494 236 L556 270 L494 304 L432 270 Z"/>
+  <text class="mm-name" x="494" y="275">contradiction</text>
+</svg>
+<figcaption>Three entity types and four relation types. <code>support</code> takes a <code>belief</code>, itself a relation, as its <code>supported</code> player.</figcaption>
+</figure>
+
+<ul>
+  <li><strong>agent</strong>, <strong>topic</strong> and <strong>observation</strong> are entities. An observation has a key, its text, the time it was observed and an exact confidence.</li>
+  <li><strong>mention</strong> connects an observation to the topics it is about.</li>
+  <li><strong>belief</strong> connects an agent to an observation it holds, and records <code>since</code> when.</li>
+  <li><strong>contradiction</strong> connects two observations that cannot both be true. Both play the same role, <code>claim</code>.</li>
+  <li><strong>support</strong> connects a <em>belief</em> to an observation that counts as evidence, with a weight. One relation plays a role in another relation. Most databases make you invent a join table or an artificial ID for this; in TypeDB it's one line of schema.</li>
+</ul>
+
+<h2 id="lean">The model in Lean</h2>
+<p>With typedb-lean you write the model once, as Lean structures. Markers in the field types say how each field maps: <code>Key</code> is a key attribute, <code>Role "…" (Ref T)</code> is a role player, and every other field is an owned attribute whose TypeDB value type follows from its Lean type.</p>
+<pre><code class="lang-lean">import TypeDB
+open TypeDB Std.Time
+
+@[typedb "agent"]
+structure Agent where
+  name : Key String
+  deriving Repr, Entity
+
+@[typedb "topic"]
+structure Topic where
+  name : Key String
+  deriving Repr, Entity
+
+@[typedb "observation"]
+structure Observation where
+  id : Key String
+  text : String
+  observedAt : PlainDateTime
+  confidence : Decimal
+  deriving Repr, Entity
+
+/-- An observation mentions a topic. -/
+structure Mention where
+  source : Role "source" (Ref Observation)
+  topic : Role "topic" (Ref Topic)
+  deriving Repr, Relation
+
+/-- An agent holds an observation as one of its beliefs. -/
+structure Belief where
+  holder : Role "holder" (Ref Agent)
+  content : Role "content" (Ref Observation)
+  since : PlainDateTime
+  deriving Repr, Relation
+
+/-- Two observations that cannot both be true. -/
+structure Contradiction where
+  a : Role "claim" (Ref Observation)
+  b : Role "claim" (Ref Observation)
+  deriving Repr, Relation
+
+/-- Evidence for a belief. The `supported` player is itself a relation. -/
+structure Support where
+  supported : Role "supported" (Ref Belief)
+  evidence : Role "evidence" (Ref Observation)
+  weight : Decimal
+  deriving Repr, Relation
+
+def schema : List TypeSpec :=
+  [TypeSpec.of Agent, TypeSpec.of Topic, TypeSpec.of Observation,
+   TypeSpec.of Mention, TypeSpec.of Belief, TypeSpec.of Contradiction, TypeSpec.of Support]</code></pre>
+<p>Note the types. <code>confidence</code> is a <code>Decimal</code>, exact to 19 fractional digits. <code>observedAt</code> is a <code>Std.Time.PlainDateTime</code>, not a string. <code>Support.supported</code> is a <code>Ref Belief</code>: the compiler won't let you put an observation there.</p>
+
+<h2 id="schema">The schema it generates</h2>
+<p><code>Schema.defineText schema</code> prints the TypeQL that the structures stand for. This is the real output:</p>
+<pre><code class="lang-typeql">define
+  attribute name, value string;
+  attribute id, value string;
+  attribute text, value string;
+  attribute observed-at, value datetime;
+  attribute confidence, value decimal;
+  attribute since, value datetime;
+  attribute weight, value decimal;
+  entity agent, owns name @key;
+  entity topic, owns name @key;
+  entity observation, owns id @key, owns text @card(1..1), owns observed-at @card(1..1), owns confidence @card(1..1);
+  relation mention, relates source, relates topic;
+  relation belief, relates holder, relates content, owns since @card(1..1);
+  relation contradiction, relates claim @card(0..2);
+  relation support, relates supported, relates evidence, owns weight @card(1..1);
+  observation plays mention:source;
+  topic plays mention:topic;
+  agent plays belief:holder;
+  observation plays belief:content;
+  observation plays contradiction:claim;
+  belief plays support:supported;
+  observation plays support:evidence;</code></pre>
+<p>Field names become kebab-case labels (<code>observedAt</code> → <code>observed-at</code>). Required fields get <code>@card(1..1)</code>, so the server rejects an observation without a text. Two fields that share the role <code>claim</code> become <code>@card(0..2)</code>. The last line, <code>belief plays support:supported</code>, is where a relation plays a role.</p>
+
+<h2 id="remember">Remember: one atomic write</h2>
+<p>Remembering something takes several inserts: the observation, a mention per topic (creating topics the agent hasn't seen yet), and the agent's belief. They belong together. Either the agent knows the whole thing or nothing at all, so they run in one write transaction:</p>
+<pre><code class="lang-lean">def remember (agent id text : String) (at_ : PlainDateTime) (confidence : Decimal)
+    (topics : List String) : Tx .write (Ref Belief) := do
+  let obs ← Entity.insert { id, text, observedAt := at_, confidence : Observation }
+  for t in topics do
+    let topic := Ref.key (α := Topic) t
+    if (← Entity.get? topic).isNone then
+      discard &lt;| Entity.insert { name := t : Topic }
+    discard &lt;| Relation.insert { source := obs, topic : Mention }
+  Relation.insert { holder := Ref.key (α := Agent) agent, content := obs, since := at_ : Belief }</code></pre>
+<p>The type <code>Tx .write (Ref Belief)</code> says it all: it needs a write transaction, and it returns a reference to the new belief. If any step fails (an unknown agent key, a duplicate observation id), <code>Driver.runSync</code> closes the transaction without committing. No observation is left without its belief.</p>
+<p>Several agents may write at once. TypeDB detects conflicting writes at commit, and a retry policy re-runs the whole body when, and only when, the commit loses a conflict:</p>
+<pre><code class="lang-lean">let belief ← d.runSync "memory" .write (retry := .conflicts 5 (.exponential 20))
+  (remember "scout" "obs-1" "The bridge on Route 9 is closed for repairs." now (pct 90) ["route-9", "bridge"])</code></pre>
+<p>Here <code>pct 90</code> is a two-line helper, <code>Decimal.ofScaled (n * 10 ^ 17)</code>, that builds the exact decimal <code>0.9</code>.</p>
+
+<h2 id="recall">Recall: typed queries</h2>
+<p>Recall is a TypeQL query whose rows decode straight into a structure. <code>deriving FromRow</code> reads each field from the query variable of the same name:</p>
+<pre><code class="lang-lean">structure Recalled where
+  text : String
+  confidence : Decimal
+  deriving Repr, FromRow
+
+def recallAbout (topic : String) : Tx .read (Array Recalled) :=
+  query typeql!"match
+    $t isa topic, has name {topic};
+    $m isa mention, links (source: $o, topic: $t);
+    $o has text $text, has confidence $confidence;
+    sort $confidence desc;"</code></pre>
+<p>The <code>{topic}</code> comes from the user, or from the language model, which is worse. <code>typeql!</code> renders every interpolated value as a quoted, escaped TypeQL literal, so the value can't change the query's structure. Here is what a hostile topic turns into:</p>
+<pre><code class="lang-lean">def topic := "bridge\"; match $x isa agent; delete $x;"
+#eval IO.println (typeql!"match $t isa topic, has name {topic};").text</code></pre>
+<pre><code class="lang-text">match $t isa topic, has name "bridge\"; match $x isa agent; delete $x;";</code></pre>
+<p>That's one string literal. Run against our test database, the query found no topic with that odd name and returned zero rows, and both agents were still there afterwards. Also note the query is a <code>Tx .read</code>: even if text did slip through, a read transaction cannot delete.</p>
+
+<h2 id="questions">Questions a vector store can't answer</h2>
+<p>With the relationships in the schema, the questions from the start of this post become short queries.</p>
+
+<h3>Which beliefs clear a confidence bar?</h3>
+<pre><code class="lang-lean">def beliefs (agent : String) (atLeast : Decimal) : Tx .read (Array Recalled) :=
+  query typeql!"match
+    $a isa agent, has name {agent};
+    $b isa belief, links (holder: $a, content: $o);
+    $o has text $text, has confidence $confidence;
+    $confidence &gt;= {atLeast};"</code></pre>
+<p><code>{atLeast}</code> with <code>pct 80</code> renders as <code>0.8dec</code>, a TypeQL decimal literal, so the comparison is exact on both sides.</p>
+
+<h3>What do I believe that something contradicts?</h3>
+<pre><code class="lang-lean">structure Conflict where
+  mine : String
+  theirs : String
+  deriving Repr, FromRow
+
+def conflicts (agent : String) : Tx .read (Array Conflict) :=
+  query typeql!"match
+    $a isa agent, has name {agent};
+    $b isa belief, links (holder: $a, content: $o1);
+    $c isa contradiction, links (claim: $o1, claim: $o2);
+    $o1 has text $mine;
+    $o2 has text $theirs;"</code></pre>
+
+<h3>Which beliefs have no evidence?</h3>
+<p>TypeQL's <code>not</code> matches the absence of a pattern. A belief with no <code>support</code> relation pointing at it is unsupported:</p>
+<pre><code class="lang-lean">def unsupported (agent : String) : Tx .read (Array (Col "text" String)) :=
+  query typeql!"match
+    $a isa agent, has name {agent};
+    $b isa belief, links (holder: $a, content: $o);
+    not \{ $s isa support, links (supported: $b); };
+    $o has text $text;"</code></pre>
+<p>In <code>typeql!</code>, TypeQL's own braces are written <code>\{</code> and <code>\}</code>, because a plain <code>{…}</code> is interpolation.</p>
+
+<h3>Everything known about a topic</h3>
+<p>Questions you ask often can live in the schema as TypeQL functions. The server type-checks them when they're defined:</p>
+<pre><code class="lang-typeql">define
+  fun about($t: topic) -&gt; { observation }:
+    match
+      $m isa mention, links (source: $o, topic: $t);
+    return { $o };</code></pre>
+<pre><code class="lang-typeql">match
+  $t isa topic, has name "bridge";
+  let $o in about($t);
+  $o has text $text;</code></pre>
+
+<h3>Where do two agents disagree?</h3>
+<p>Because beliefs are per agent, contradictions <em>between</em> agents are one pattern. A team supervisor can run this before agents act on shared plans:</p>
+<pre><code class="lang-typeql">match
+  $a isa agent;
+  $b isa belief, links (holder: $a, content: $mine);
+  $c isa contradiction, links (claim: $mine, claim: $other);
+  $b2 isa belief, links (holder: $a2, content: $other);
+  $a has name $who; $a2 has name $whom;</code></pre>
+
+<h3>Show the evidence, as JSON for the prompt</h3>
+<p>When the agent builds its next prompt, a <code>fetch</code> query returns documents ready to paste in, with each claim next to its evidence:</p>
+<pre><code class="lang-typeql">match
+  $b isa belief, links (holder: $a, content: $o);
+  $s isa support, links (supported: $b, evidence: $e);
+  $a has name $agent; $o has text $claim; $e has text $evidence;
+fetch { "agent": $agent, "claim": $claim, "evidence": $evidence };</code></pre>
+<p>In Lean, <code>fetch (α := T)</code> decodes those documents into any type with a <code>Lean.FromJson</code> instance.</p>
+
+<h2 id="concurrency">Many agents, one memory</h2>
+<p>Each <code>Driver.run</code> is a <code>Std.Async</code> computation on its own thread, and one driver connection multiplexes them all. An agent that recalls two topics before planning can do it concurrently:</p>
+<pre><code class="lang-lean">def recallBoth (d : Driver) (t1 t2 : String) : EIO TypeDBError (Array Recalled × Array Recalled) :=
+  (Std.Async.EAsync.concurrently
+    (d.run "memory" .read (recallAbout t1))
+    (d.run "memory" .read (recallAbout t2))).block</code></pre>
+<p>If either transaction fails, the whole computation fails with that transaction's typed error.</p>
+
+<h2 id="evolve">Start-up checks and an evolving memory</h2>
+<p>Memory outlives code. The agent you deploy next month will open a database written by this month's version. Two features keep them in step.</p>
+<p><strong>Verification.</strong> At start-up, <code>Schema.verify!</code> compares the Lean structures with the live schema. It fails with <code>TypeDBError.schemaMismatch</code> and a list of issues, such as <code>type 'observation' does not own 'confidence'</code>, instead of letting the first recall fail an hour later.</p>
+<p><strong>Migrations.</strong> Suppose observations now need an <code>origin</code>: a sensor, a web page, a user. Migrations are versioned steps, and each step runs in its own schema transaction together with its history record:</p>
+<pre><code class="lang-lean">def migrations : List Migration := [
+  Migration.define 1 "agent memory" schema,
+  Migration.tql 2 "observation origin"
+    "define attribute origin, value string; observation owns origin;"
+    (down := some "undefine owns origin from observation; origin;"),
+  { version := 3, name := "default origin", fingerprint := "origin := unknown, v1"
+    up := exec typeql!"match $o isa observation; not \{ $o has origin $x; }; insert $o has origin \"unknown\";"
+    down := .step (exec typeql!"match $o isa observation, has origin $x; delete has $x of $o;") }
+]</code></pre>
+<p>Step 3 is Lean code that backfills existing observations. Lean code can't be hashed, so it carries a <code>fingerprint</code>. If an applied step's checksum later changes, <code>migrate</code> stops before running anything. Your agents never run against a history they didn't write.</p>
+
+<h2 id="mistakes">Mistakes that don't compile</h2>
+<p>A memory layer is written once and called from everywhere, which is where small mistakes hide. Two of the most common ones never reach the database. Writing in a read transaction:</p>
+<pre><code class="lang-lean">def forget : Tx .read Unit :=
+  exec typeql!"match $o isa observation; insert $o has text \"x\";"</code></pre>
+<pre><code class="lang-text">error: failed to synthesize instance of type class
+  TxMode.read.Allows TxMode.write</code></pre>
+<p>Interpolating something that isn't a value, such as a whole request object:</p>
+<pre><code class="lang-lean">structure UserInput where
+  raw : String
+
+def lookup (u : UserInput) : Tx .read (Array Recalled) :=
+  query typeql!"match $t isa topic, has name {u}; …"</code></pre>
+<pre><code class="lang-text">error: failed to synthesize instance of type class
+  ToTypeQL UserInput</code></pre>
+<p>More of these are in <a href="five-bugs-the-compiler-catches.html">Five bugs the compiler catches for you</a>.</p>
+
+<h2 id="together">Putting it together</h2>
+<pre><code class="lang-lean">def main : IO Unit := do
+  let r ← (Driver.withDriver { address := "127.0.0.1:1729" } fun d =&gt; do
+    d.ensureDatabase "memory"
+    discard &lt;| d.migrateSync "memory" migrations
+    d.runSync "memory" .read (Schema.verify! schema)
+    d.runSync "memory" .write do
+      discard &lt;| Entity.insert { name := "scout" : Agent }
+    let now ← PlainDateTime.now
+    let b ← d.runSync "memory" .write (retry := .conflicts 5 (.exponential 20))
+      (remember "scout" "obs-1" "The bridge on Route 9 is closed for repairs." now (pct 90) ["route-9", "bridge"])
+    let ev ← d.runSync "memory" .write
+      (Entity.insert { id := "obs-2", text := "A road sign says: bridge closed until Friday.",
+                       observedAt := now, confidence := pct 70 : Observation })
+    d.runSync "memory" .write (support b ev (pct 60))
+    for r in ← d.runSync "memory" .read (recallAbout "bridge") do
+      IO.println s!"{r.confidence}  {r.text}"
+    : EIO TypeDBError Unit).toBaseIO
+  if let .error e := r then IO.eprintln e</code></pre>
+<p>Here <code>support</code> is a one-line helper around <code>Relation.insert { supported := belief, evidence, weight : Support }</code>. Every Lean snippet in this post compiles against typedb-lean, and every TypeQL query in it ran against TypeDB 3.14.0 on a database with this schema.</p>
+
+<h2 id="next">Where to go next</h2>
+<div class="callout book">
+  <div class="book-promo">
+    <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
+    <div>
+      <strong>Go deeper: TypeDB for Edge AI Agents</strong>
+      <p>This post is a small slice of a larger subject. The book covers TypeDB's type system and TypeQL in depth, and how to use a typed knowledge graph as the memory of AI agents running at the edge.</p>
+      <p style="margin-top:.6rem"><a class="btn primary" href="https://leanpub.com/typedbforedgeaiagents">Get it on Leanpub →</a></p>
+    </div>
+  </div>
+</div>
+<ul>
+  <li><a href="../book/index.html">The mini book</a>: TypeDB basics, just enough Lean, and how the types connect, in seven short chapters.</li>
+  <li><a href="../guide.html">The docs</a>: every part of the library, from install to migrations.</li>
+  <li><a href="../examples.html">Examples</a>: complete programs, from a social network to a bank transfer with conflict retry.</li>
+</ul>
+
+</article>
+<script src="../assets/site.js"></script>
+</body>
+</html>

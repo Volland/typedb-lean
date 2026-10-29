@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Five bugs the compiler catches · typedb-lean</title>
+  <meta name="description" content="Five common database-client bugs, and how typedb-lean turns each into a compile error or one typed failure at start-up, with the real error messages.">
+  <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="blog">
+<header class="post-hero"><div class="inner">
+  <a href="index.html" class="small">← All posts</a>
+  <div class="eyebrow" style="margin-top:1rem">Guide</div>
+  <h1>Five bugs the compiler catches for you</h1>
+  <p class="lead">Database bugs usually show up in production, as an exception from a query someone wrote months ago. Here are five common ones, what each looks like in a typical driver, and where typedb-lean stops it.</p>
+  <div class="post-meta"><span>October 29, 2026</span><span>·</span><span>7 min read</span><span class="tag">Type safety</span><span class="tag">Lean</span></div>
+</div></header>
+<article class="post-body">
+
+<p>Not every check can happen at compile time, and this post is clear about which ones do. Three of the five are compile errors. One is a typed error on the first bad row. One fails once, at start-up, before your program does any work.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Bug</th><th>Caught</th></tr></thead>
+  <tbody>
+    <tr><td>1. A write inside a read transaction</td><td>compile time</td></tr>
+    <tr><td>2. A query built from untrusted text</td><td>compile time, and escaping by construction</td></tr>
+    <tr><td>3. A cursor used after its transaction</td><td>compile time</td></tr>
+    <tr><td>4. A row decoded into the wrong shape</td><td>run time, a typed error that names the column</td></tr>
+    <tr><td>5. Code and schema that drifted apart</td><td>start-up, with <code>Schema.verify!</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p>The examples use this mapping:</p>
+<pre><code class="lang-lean">@[typedb "person"]
+structure Person where
+  email : Key String
+  name : String
+  age : Option Int64 := none
+  deriving Entity
+
+structure PersonRow where
+  name : String
+  age : Option Int64
+  deriving FromRow</code></pre>
+
+<h2 id="write-in-read">1. A write inside a read transaction</h2>
+<p><strong>In a typical driver</strong>, the transaction type is an argument you pass at run time, and the query is a string. A helper written for a read transaction picks up an <code>insert</code> during a refactor, and the server rejects it, in production, on the code path nobody tested.</p>
+<p><strong>In typedb-lean</strong>, a transaction body has type <code>Tx m α</code>, with the mode <code>m</code> (<code>.read</code>, <code>.write</code> or <code>.schema</code>) in the type. <code>typeql!</code> reads the weakest mode a query needs off its text, and every operation demands a proof that the current mode allows it:</p>
+<pre><code class="lang-lean">def addNickname : Tx .read Unit :=
+  exec typeql!"match $p isa person; insert $p has name \"x\";"</code></pre>
+<pre><code class="lang-text">error: failed to synthesize instance of type class
+  TxMode.read.Allows TxMode.write</code></pre>
+<p>The other direction is fine. A read helper can run inside a write transaction, and a helper can take the mode as a parameter to work in any mode strong enough:</p>
+<pre><code class="lang-lean">def findByEmail {m : TxMode} [TxMode.Allows m .read] (email : String) : Tx m (Option PersonRow) :=
+  query1? typeql!"match $p isa person, has email {email}, has name $name; try \{ $p has age $age; };"</code></pre>
+
+<h2 id="injection">2. A query built from untrusted text</h2>
+<p><strong>In a typical driver</strong>, TypeDB takes queries as text, with no server-side parameter binding, so values get spliced into the string. One forgotten escape, and a user's input becomes part of the query.</p>
+<p><strong>In typedb-lean</strong>, every <code>{value}</code> in <code>typeql!</code> goes through the <code>ToTypeQL</code> class, which renders it as a TypeQL literal. Strings are quoted, with quotes, backslashes and control characters escaped. A value can't close the literal and start a new statement:</p>
+<pre><code class="lang-lean">def email := "x\"; match $p isa person; delete $p;"
+#eval IO.println (typeql!"match $p isa person, has email {email};").text</code></pre>
+<pre><code class="lang-text">match $p isa person, has email "x\"; match $p isa person; delete $p;";</code></pre>
+<p>And a type with no <code>ToTypeQL</code> instance, like a request object you meant to unpack, does not compile at all:</p>
+<pre><code class="lang-lean">structure UserInput where
+  raw : String
+
+def lookup (u : UserInput) : Tx .read (Array PersonRow) :=
+  query typeql!"match $p isa person, has email {u}, has name $name; try \{ $p has age $age; };"</code></pre>
+<pre><code class="lang-text">error: failed to synthesize instance of type class
+  ToTypeQL UserInput</code></pre>
+<p>When you really do need to splice text, such as a type label chosen at run time, you say so with <code>Raw.mk</code>, which makes it easy to find in review.</p>
+
+<h2 id="cursor">3. A cursor used after its transaction</h2>
+<p><strong>In a typical driver</strong>, a query returns a lazy iterator over the server's answer stream. Return it from the function that opened the transaction, and it fails when someone iterates it later, because the transaction under it has closed.</p>
+<p><strong>In typedb-lean</strong>, <code>stream q</code> is only a <em>description</em>: a query and a decoder. The one way to iterate it is a <code>for</code> loop inside a transaction body. The cursor is opened when the loop starts and released when it ends, breaks or throws. Smuggle the description out and try to loop outside a transaction, and there's no <code>for</code> to call:</p>
+<pre><code class="lang-lean">def leak (d : Driver) : EIO TypeDBError Unit := do
+  let s ← d.runSync "db" .read (pure (stream (α := PersonRow) typeql!"match $p isa person, has name $name;"))
+  for p in s do
+    IO.println p.name</code></pre>
+<pre><code class="lang-text">error: failed to synthesize instance of type class
+  ForIn (EIO TypeDBError) (Tx.RowStream TxMode.read PersonRow) ?α</code></pre>
+<p>Move the loop into the body, and it compiles. Memory stays constant however many rows there are:</p>
+<pre><code class="lang-lean">def printNames : Tx .read Unit := do
+  for p in stream (α := PersonRow) typeql!"match $p isa person, has name $name; try \{ $p has age $age; };" do
+    IO.println p.name</code></pre>
+
+<h2 id="decode">4. A row decoded into the wrong shape</h2>
+<p><strong>In a typical driver</strong>, you read a column with something like <code>row.get("age").as_integer()</code>. If the query changed and <code>$age</code> is now a string, or missing, you get a null, a cast exception, or a wrong number far from the query.</p>
+<p><strong>In typedb-lean</strong>, the shape of a row is a type, and rows decode into it directly. The <em>query text</em> is not checked against that type at compile time, though. TypeQL is checked by the server, and what a variable holds depends on the live data. So a mismatch is a <strong>run-time</strong> error, but a typed one, raised on the first bad row, that names the column:</p>
+<pre><code class="lang-lean">def ages : Tx .read (Array (Col "name" Int64)) :=
+  query typeql!"match $p isa person, has name $name;"</code></pre>
+<pre><code class="lang-text">cannot decode column 'name': expected integer, got string attribute</code></pre>
+<p>Because it's a value of <code>TypeDBError</code>, not a string, you can match on it:</p>
+<pre><code class="lang-lean">def safeAges : Tx .read (Array (Col "name" Int64)) := do
+  try ages
+  catch
+    | .decode col expected got =&gt; do
+        IO.eprintln s!"{col}: expected {expected}, got {got}"
+        return #[]
+    | e =&gt; throw e</code></pre>
+<p>Optional columns are explicit too. A field of type <code>Option Int64</code> reads a column that may be empty, from a <code>try</code> block, as <code>none</code>. A plain <code>Int64</code> field fails if the column is missing.</p>
+
+<h2 id="drift">5. Code and schema that drifted apart</h2>
+<p><strong>In a typical driver</strong>, the schema lives in the database and the assumptions live in the code. Someone undefines an attribute in a migration, and the first sign is a failed query hours after the deploy.</p>
+<p><strong>In typedb-lean</strong>, the Lean structures <em>are</em> the expected schema. <code>Schema.verify!</code> compares them with the live database at start-up:</p>
+<pre><code class="lang-lean">def schema : List TypeSpec := [TypeSpec.of Person]
+
+def start (d : Driver) : EIO TypeDBError Unit := do
+  d.runSync "people" .read (Schema.verify! schema)</code></pre>
+<p>If the database no longer lets a person own an <code>age</code>, the program stops before doing any work:</p>
+<pre><code class="lang-text">schema mismatch:
+  - type 'person' does not own 'age'</code></pre>
+<p>It also reports missing types, wrong kinds, wrong supertypes, value-type changes, and missing <code>relates</code> and <code>plays</code>. Pair it with <a href="../guide.html#migrations">migrations</a>, which store their history and checksums in the database, and code and schema change together.</p>
+
+<h2 id="bonus">Bonus: the wrong value for a field</h2>
+<p>The ORM's update takes a typed field handle, so the new value must have the field's type. <code>age</code> is an <code>Option Int64</code>, so a string does not compile:</p>
+<pre><code class="lang-lean">def birthday (r : Ref Person) : Tx .write Unit :=
+  Entity.update r Person.field.age "42"</code></pre>
+<pre><code class="lang-text">error: Application type mismatch: The argument
+  "42"
+has type
+  String
+but is expected to have type
+  ORM.TypeOf fun x =&gt; x.age</code></pre>
+<p><code>Entity.update r Person.field.age (some 42)</code> compiles, and <code>Entity.update r Person.field.age none</code> removes the attribute.</p>
+
+<h2 id="takeaway">The takeaway</h2>
+<p>None of this needs proofs or tactics. You write ordinary Lean, and the types do the work. The library puts the facts it knows into types: the mode a query needs, which values can be rendered, where a cursor may live, and the shape of a field. The two things it can't know at compile time, the live data and the live schema, it checks once, early, with errors you can match on.</p>
+<p>To see these checks in a larger program, read <a href="typed-memory-for-ai-agents.html">Typed memory for AI agents</a>. For the ideas behind them, chapter 5 of the mini book, <a href="../book/05-types-everywhere.html">Types everywhere</a>, walks through each layer.</p>
+
+<div class="callout book">
+  <div class="book-promo">
+    <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
+    <div>
+      <strong>Learn TypeDB in depth</strong>
+      <p>The schema side of these checks comes from TypeDB's type system. <em>TypeDB for Edge AI Agents</em> covers it, and TypeQL, in depth.</p>
+      <p style="margin-top:.6rem"><a href="https://leanpub.com/typedbforedgeaiagents">Get it on Leanpub →</a></p>
+    </div>
+  </div>
+</div>
+
+</article>
+<script src="../assets/site.js"></script>
+</body>
+</html>

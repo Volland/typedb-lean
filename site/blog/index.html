@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blog · typedb-lean</title>
+  <meta name="description" content="Notes on typed graphs: use cases, guides and releases for typedb-lean, the TypeDB 3 client for Lean 4.">
+  <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="blog">
+<header class="post-hero"><div class="inner">
+  <div class="eyebrow">Blog</div>
+  <h1>Notes on typed graphs</h1>
+  <p class="lead">Use cases, guides and releases: what you can build when your database and your programming language both take types seriously.</p>
+</div></header>
+<div class="post-body">
+  <div class="post-list">
+
+    <a class="card post-card" href="typed-memory-for-ai-agents.html">
+      <div class="thumb">
+        <svg viewBox="0 0 100 75" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="18" cy="20" r="8"/>
+          <circle cx="82" cy="20" r="8"/>
+          <circle cx="50" cy="62" r="7"/>
+          <path d="M50 24 L62 36 L50 48 L38 36 Z"/>
+          <path d="M24 25 L39 34 M76 25 L61 34 M50 48 L50 55"/>
+          <path d="M44 34 h12 M46 39 h8" stroke-width="2"/>
+        </svg>
+      </div>
+      <div>
+        <div class="post-meta"><span>October 29, 2026</span><span class="tag">Use case</span><span class="tag">AI agents</span></div>
+        <h3>Typed memory for AI agents with TypeDB and Lean</h3>
+        <p class="muted">Model an agent's memory as a typed graph, with observations, beliefs, evidence, time, exact confidence and contradictions. Then ask the questions a vector store can't answer, with every query checked by Lean.</p>
+      </div>
+    </a>
+
+    <a class="card post-card" href="five-bugs-the-compiler-catches.html">
+      <div class="thumb">
+        <svg viewBox="0 0 100 75" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M50 8 L76 18 V36 C76 52 64 63 50 68 C36 63 24 52 24 36 V18 Z"/>
+          <path d="M38 38 L47 47 L63 29"/>
+        </svg>
+      </div>
+      <div>
+        <div class="post-meta"><span>October 29, 2026</span><span class="tag">Guide</span><span class="tag">Type safety</span></div>
+        <h3>Five bugs the compiler catches for you</h3>
+        <p class="muted">A write in a read transaction, an injectable query, a cursor that outlives its transaction, a row of the wrong shape and schema drift. When each one is caught, with the real error messages.</p>
+      </div>
+    </a>
+
+    <a class="card post-card" href="introducing-typedb-lean.html">
+      <div class="thumb">
+        <svg viewBox="0 0 100 75" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="16" y="12" width="68" height="51" rx="8"/>
+          <path d="M16 24 H84"/>
+          <circle cx="23" cy="18" r="1.4" fill="currentColor"/>
+          <circle cx="29" cy="18" r="1.4" fill="currentColor"/>
+          <path d="M40 34 C43 33.5 45 35 46 37.5 L53 53 M47.5 41 L41 53"/>
+          <path d="M60 40 h12 M60 47 h8"/>
+        </svg>
+      </div>
+      <div>
+        <div class="post-meta"><span>October 29, 2026</span><span class="tag">Release</span><span class="tag">v0.1.0</span></div>
+        <h3>Introducing typedb-lean</h3>
+        <p class="muted">A TypeDB 3 client for Lean 4 with typed transactions, typed queries and typed results, plus an ORM and migrations. It is as fast as the official Rust driver.</p>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="callout book" style="margin-top:2.5rem">
+    <div class="book-promo">
+      <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
+      <div>
+        <strong>Want the long version?</strong>
+        <p><em>TypeDB for Edge AI Agents</em> covers TypeDB's model and TypeQL in depth, and how to use a typed knowledge graph as memory for AI agents. For a shorter path, start with <a href="../book/index.html">the mini book</a>.</p>
+        <p style="margin-top:.6rem"><a href="https://leanpub.com/typedbforedgeaiagents">Get it on Leanpub →</a></p>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

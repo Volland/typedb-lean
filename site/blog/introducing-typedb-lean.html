@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Introducing typedb-lean · typedb-lean</title>
+  <meta name="description" content="typedb-lean v0.1.0: a TypeDB 3 client for Lean 4 with typed transactions, typed queries, typed results, an ORM and migrations, as fast as the official Rust driver.">
+  <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="blog">
+<header class="post-hero"><div class="inner">
+  <a href="index.html" class="small">← All posts</a>
+  <div class="eyebrow" style="margin-top:1rem">Release</div>
+  <h1>Introducing typedb-lean</h1>
+  <p class="lead">A TypeDB 3 client for Lean 4, where transactions, queries and results all have types the compiler checks, and which reads data as fast as the official Rust driver.</p>
+  <div class="post-meta"><span>October 29, 2026</span><span>·</span><span>5 min read</span><span class="tag">Release</span><span class="tag">v0.1.0</span></div>
+</div></header>
+<article class="post-body">
+
+<p><a href="https://typedb.com">TypeDB</a> is a database with a real type system. Its schema declares entities, relations and attributes, the roles they play, and inheritance between them, and the server rejects data that doesn't fit. <a href="https://lean-lang.org">Lean 4</a> is a functional programming language and proof assistant with dependent types.</p>
+<p>typedb-lean is a client library that connects them, and it keeps the types on both sides instead of flattening everything into strings at the boundary.</p>
+
+<pre><code class="lang-lean">import TypeDB
+open TypeDB
+
+@[typedb "person"]
+structure Person where
+  email : Key String
+  name : String
+  age : Option Int64 := none
+  deriving Entity
+
+structure Friendship where
+  a : Role "friend" (Ref Person)
+  b : Role "friend" (Ref Person)
+  deriving Relation
+
+def main : IO Unit := do
+  let r ← (Driver.withDriver { address := "127.0.0.1:1729" } fun d =&gt; do
+    d.ensureDatabase "social"
+    d.runSync "social" .schema (Schema.defineTx [TypeSpec.of Person, TypeSpec.of Friendship])
+    d.runSync "social" .write do
+      let ann ← Entity.insert { email := "ann@example.com", name := "Ann" : Person }
+      let bob ← Entity.insert { email := "bob@example.com", name := "Bob", age := some 41 : Person }
+      discard &lt;| Relation.insert { a := ann, b := bob : Friendship }
+    d.runSync "social" .read do
+      for row in stream (α := Col "n" String) typeql!"match $p isa person, has name $n;" do
+        IO.println row.val
+    : EIO TypeDBError Unit).toBaseIO
+  if let .error e := r then IO.eprintln e</code></pre>
+
+<h2 id="ideas">Three ideas</h2>
+<h3>Typed transactions</h3>
+<p>A transaction body has type <code>Tx .read α</code>, <code>Tx .write α</code> or <code>Tx .schema α</code>. Every query carries the weakest mode that may run it, inferred from its text, so an <code>insert</code> inside a read transaction is a compile error, not a server error. <code>Driver.runSync</code> commits on success, rolls back on any error, and can retry commit conflicts with a policy you choose. <code>Driver.run</code> does the same as a <code>Std.Async</code> computation on its own thread.</p>
+<h3>Typed queries</h3>
+<p><code>typeql!"… {value} …"</code> renders each interpolated value as an escaped TypeQL literal through the <code>ToTypeQL</code> class. A value can't change a query's structure, and a value with no TypeQL form doesn't compile. TypeDB takes queries as text, with no server-side parameter binding, so this is where injection safety has to live.</p>
+<h3>Typed results</h3>
+<p>Rows decode straight into Lean structures with <code>deriving FromRow</code>, and <code>fetch</code> documents decode through <code>Lean.FromJson</code>. TypeDB's value types map to exact Lean types: <code>decimal</code> to an exact <code>Decimal</code>, dates and datetimes to <code>Std.Time</code>, <code>duration</code> to a type that keeps months, days and nanoseconds apart. A row of the wrong shape is a typed <code>decode</code> error that names the column.</p>
+
+<h2 id="orm">An ORM and migrations</h2>
+<p>For everyday work, <code>deriving Entity</code> and <code>deriving Relation</code> give you inserts, reads, updates and deletes. You also get subtypes through <code>extends</code>, relations that play roles in other relations, and polymorphic reads into an inductive type. The same structures generate the TypeQL schema, and <code>Schema.verify!</code> checks them against the live database at start-up.</p>
+<p>Migrations are versioned up and down steps. Each one runs in its own schema transaction together with its history record, and checksums stop a changed step from silently running against a database that applied the old one. A step can change the schema and backfill data atomically.</p>
+
+<h2 id="performance">Performance</h2>
+<p>typedb-lean wraps TypeDB's official C driver, and the question was what the Lean layer costs. <code>lake exe bench</code> runs the same workloads with this library and with the official Rust driver, against one server. On an Apple M-series laptop with TypeDB 3.14.0 in Docker:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Workload</th><th class="num">typedb-lean</th><th class="num">Rust driver</th></tr></thead>
+  <tbody>
+    <tr><td>Scan of 100,000 rows into structures</td><td class="num">155,368 rows/s</td><td class="num">142,061 rows/s</td></tr>
+    <tr><td>Point lookup, p50</td><td class="num">1.05 ms</td><td class="num">1.03 ms</td></tr>
+    <tr><td>Point lookup, p99</td><td class="num">1.52 ms</td><td class="num">2.39 ms</td></tr>
+    <tr><td>Bulk insert of 10,000 entities</td><td class="num">4.75 s</td><td class="num">4.71 s</td></tr>
+    <tr><td>16 concurrent read transactions</td><td class="num">367 ms</td><td class="num">607 ms</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Two things make that possible: rows are decoded in batches, many per native call, and the server streams answers ahead of the client. The benchmark is part of CI and fails if scans fall below 80% of the Rust driver's throughput, or the lookup p50 rises above 1.1×. The <a href="../benchmarks.html">benchmarks page</a> has the workloads, the method and the caveats.</p>
+
+<h2 id="install">Install</h2>
+<p>Add the package to your <code>lakefile.lean</code>:</p>
+<pre><code class="lang-lean">require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"</code></pre>
+<p>The first <code>lake build</code> clones TypeDB's driver at the pinned version (3.14.0) and builds its C library with cargo, so you need a Rust toolchain and <code>protoc</code>, the protobuf compiler:</p>
+<pre><code class="lang-sh">brew install protobuf                  # macOS
+sudo apt-get install protobuf-compiler # Debian, Ubuntu
+docker run -d --name typedb -p 1729:1729 typedb/typedb:3.14.0</code></pre>
+<p>Supported platforms are Linux x86_64, Linux arm64 and macOS arm64, with Lean <code>v4.35.0</code>.</p>
+
+<h2 id="learn">Learn more</h2>
+<ul>
+  <li><a href="../guide.html">The docs</a> cover every part of the library.</li>
+  <li><a href="../examples.html">The examples</a> are complete programs, from a social network to a bank transfer with conflict retry.</li>
+  <li><a href="../book/index.html">The mini book</a> is seven short chapters on TypeDB, Lean and how the types connect.</li>
+  <li><a href="typed-memory-for-ai-agents.html">Typed memory for AI agents</a> is a longer use case built on the library.</li>
+</ul>
+<div class="callout book">
+  <div class="book-promo">
+    <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
+    <div>
+      <strong>New to TypeDB?</strong>
+      <p><em>TypeDB for Edge AI Agents</em> teaches TypeDB's model and TypeQL in depth, and how to use a typed knowledge graph as memory for AI agents.</p>
+      <p style="margin-top:.6rem"><a href="https://leanpub.com/typedbforedgeaiagents">Get it on Leanpub →</a></p>
+    </div>
+  </div>
+</div>
+
+<h2 id="next">What's next</h2>
+<p>This is the first release, and the best input now is real use. Try it on a model of your own. If something is missing, awkward or wrong, whether an API, a value type, a platform or a confusing error, please <a href="https://github.com/Volland/typedb-lean/issues">open an issue</a>. Pull requests are welcome too. The design decisions and their reasons are recorded in the repository, so you can see why things are the way they are before changing them.</p>
+
+</article>
+<script src="../assets/site.js"></script>
+</body>
+</html>
