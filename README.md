@@ -45,7 +45,7 @@ def main : IO Unit := do
 Add the package to your `lakefile.lean`:
 
 ```lean
-require «typedb-lean» from git "https://github.com/volland/typedb-lean" @ "main"
+require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"
 ```
 
 The first `lake build` clones `typedb-driver` at the version in `TYPEDB_VERSION` (currently 3.14.0) and builds its C library with cargo, so you need a Rust toolchain. To link a library you built yourself instead, set `TYPEDB_DRIVER_LIB=/path/to/libtypedb_driver_clib.a`.
@@ -56,7 +56,8 @@ Supported platforms are Linux x86_64, Linux arm64 and macOS arm64. Lean is pinne
 
 - [Guide](docs/guide/README.md): getting started, transactions, async, queries, decoding, the ORM, migrations and performance.
 - [Example](examples/social/Social.lean): a small social network that uses every feature. Run it with `lake exe social` (it uses `TYPEDB_ADDRESS`, default `127.0.0.1:1729`).
-- API docs: `cd docbuild && lake build TypeDB:docs` (doc-gen4) writes HTML to `docbuild/.lake/build/doc`.
+- [API reference](https://volland.github.io/typedb-lean/api/TypeDB.html), built from the docstrings by doc-gen4 (locally: `cd docbuild && lake build TypeDB:docs`).
+- [Changelog](CHANGELOG.md) and [releasing](RELEASING.md).
 - Design: [ADR 0002](docs/adr/0002-typedb-lean-architecture.md), [decisions](tg.md/decisions.md), [constraints](tg.md/constraints.md), and the OpenSpec specs in [openspec/specs](openspec/specs).
 
 ## Testing

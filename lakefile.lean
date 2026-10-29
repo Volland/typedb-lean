@@ -24,6 +24,8 @@ package «typedb-lean» where
   version := v!"0.1.0"
   description := "TypeDB 3 client for Lean 4: a mode-indexed transaction monad, typed TypeQL interpolation, batched row decoding, a lightweight ORM and migrations, over the official C driver."
   keywords := #["typedb", "database", "graph", "orm", "ffi"]
+  homepage := "https://volland.github.io/typedb-lean/"
+  versionTags := .startsWith "v"
   license := "Apache-2.0"
   licenseFiles := #["LICENSE"]
   readmeFile := "README.md"

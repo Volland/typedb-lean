@@ -1,0 +1,56 @@
+# Releases a version tag (v*): checks that the tag, the lakefile and the changelog agree, runs
+# the full test suite and the benchmark against a TypeDB container on Linux, and publishes a
+# GitHub release with the changelog section as its notes. Lean packages are distributed as
+# source: Lake users depend on the tag, and Reservoir indexes the tag from GitHub.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Versions agree with the tag
+        run: scripts/check-versions.sh "$GITHUB_REF_NAME"
+      - name: Build
+        run: lake build
+      - name: Tests
+        run: lake test
+      - name: Benchmark
+        run: lake exe bench --ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: bench/report.json
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release notes
+        run: scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench-report
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --notes-file notes.md
+            gh release upload "$GITHUB_REF_NAME" report.json --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --title "typedb-lean $GITHUB_REF_NAME" --notes-file notes.md report.json
+          fi

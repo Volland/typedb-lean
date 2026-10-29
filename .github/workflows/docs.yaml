@@ -1,0 +1,65 @@
+# Builds the API docs with doc-gen4 and publishes them, with the guide, to GitHub Pages.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: .lake/packages
+          key: docgen-${{ hashFiles('docbuild/lakefile.toml', 'lean-toolchain') }}
+      - name: API docs
+        run: cd docbuild && lake build TypeDB:docs
+      - name: Assemble the site
+        run: |
+          mkdir -p site
+          cp -r docbuild/.lake/build/doc site/api
+          cp -r docs/guide site/guide
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>typedb-lean</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem}</style>
+          <h1>typedb-lean</h1>
+          <p>A TypeDB 3 client for Lean 4, built on the official C driver.</p>
+          <ul>
+            <li><a href="api/TypeDB.html">API reference</a></li>
+            <li><a href="https://github.com/Volland/typedb-lean/tree/main/docs/guide">Guide</a></li>
+            <li><a href="https://github.com/Volland/typedb-lean">Source</a></li>
+          </ul>
+          HTML
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
