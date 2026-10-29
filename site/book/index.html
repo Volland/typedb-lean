@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Typed Graphs · typedb-lean</title>
+  <meta name="description" content="A mini book on TypeDB and Lean 4 together: TypeDB basics, just enough Lean, modeling a domain, and how typedb-lean carries types from the schema to your code.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html" aria-current="page">Introduction</a></li>
+      <li><a href="01-why.html">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#who">Who it is for</a></li>
+      <li><a href="#chapters">Chapters</a></li>
+      <li><a href="#setup">What you need</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">The mini book</div>
+    <h1>Typed Graphs: TypeDB and Lean Together</h1>
+    <p class="lead">A short book about keeping types intact from the database schema to the code that uses it. It teaches the basics of TypeDB, just enough Lean 4, and how typedb-lean connects the two.</p>
+
+    <h2 id="who">Who it is for</h2>
+    <p>Developers who know at least one of the two systems and want to learn the other. If you have used TypeDB from Python or Rust, the Lean chapters show what a stronger type checker can do with your schema. If you write Lean, the TypeDB chapters introduce a database whose schema is a type system of its own: entities, relations, attributes and roles, with inheritance.</p>
+    <p>No background in theorem proving is needed. The book uses Lean as a programming language. Dependent types appear only where they do practical work, such as keeping a write out of a read transaction.</p>
+
+    <h2 id="chapters">Chapters</h2>
+    <ol class="toc-list">
+      <li><a href="01-why.html"><span class="chapter-num">01</span><div><b>Why TypeDB and Lean</b><span>Where types get lost between a program and its database, and what connecting two type systems gives you.</span></div></a></li>
+      <li><a href="02-typedb-basics.html"><span class="chapter-num">02</span><div><b>TypeDB basics</b><span>The entity–relation–attribute model, roles and inheritance, and TypeQL: define, insert, match, fetch, reduce, functions.</span></div></a></li>
+      <li><a href="03-lean-basics.html"><span class="chapter-num">03</span><div><b>Just enough Lean</b><span>Structures, inductive types, pattern matching, type classes, do-notation, and types that depend on values.</span></div></a></li>
+      <li><a href="04-modeling.html"><span class="chapter-num">04</span><div><b>Modeling a domain</b><span>A small publishing domain, from nouns and verbs to a TypeDB schema to Lean structures that generate it.</span></div></a></li>
+      <li><a href="05-types-everywhere.html"><span class="chapter-num">05</span><div><b>Types everywhere</b><span>Every layer where typedb-lean keeps a type: schema, values, queries, transaction modes, rows, errors.</span></div></a></li>
+      <li><a href="06-queries-and-transactions.html"><span class="chapter-num">06</span><div><b>Queries and transactions</b><span>Running transactions, commit and rollback, retries, reading rows and documents, and concurrency with Std.Async.</span></div></a></li>
+      <li><a href="07-building-an-app.html"><span class="chapter-num">07</span><div><b>Building an app</b><span>The social network example end to end, migrations, testing, performance, and where to read further.</span></div></a></li>
+    </ol>
+
+    <h2 id="setup">What you need</h2>
+    <p>To run the examples you need Lean 4 (installed with <a href="https://github.com/leanprover/elan">elan</a>), a Rust toolchain and <code>protoc</code> (the first build compiles TypeDB's C driver), and Docker for a local TypeDB server:</p>
+    <pre><code class="lang-sh">docker run -d --name typedb -p 1729:1729 typedb/typedb:3.14.0</code></pre>
+    <p>Then add the library to your <code>lakefile.lean</code> as described in the <a href="../guide.html">guide</a>. Every Lean snippet in this book has been compiled against the library, and every TypeQL query has been run against TypeDB 3.14.0.</p>
+
+    <div class="callout book book-promo">
+      <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
+      <div>
+        <strong>Want the full story of TypeDB?</strong>
+        <p>This mini book covers what you need to use typedb-lean. <a href="https://leanpub.com/typedbforedgeaiagents"><em>TypeDB for Edge AI Agents</em></a> on Leanpub goes much further into TypeDB's model, TypeQL, and using a typed knowledge graph as memory for AI agents.</p>
+      </div>
+    </div>
+
+    <nav class="pager"><a class="next" href="01-why.html"><small>Start reading</small>1. Why TypeDB and Lean</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

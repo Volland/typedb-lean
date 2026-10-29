@@ -1,4 +1,4 @@
-# Builds the API docs with doc-gen4 and publishes them, with the guide, to GitHub Pages.
+# Builds the API docs with doc-gen4 and publishes them under api/, with the website in site/, to GitHub Pages.
 name: docs
 
 on:
@@ -33,26 +33,13 @@ jobs:
         run: cd docbuild && lake build TypeDB:docs
       - name: Assemble the site
         run: |
-          mkdir -p site
-          cp -r docbuild/.lake/build/doc site/api
-          cp -r docs/guide site/guide
-          cat > site/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>typedb-lean</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem}</style>
-          <h1>typedb-lean</h1>
-          <p>A TypeDB 3 client for Lean 4, built on the official C driver.</p>
-          <ul>
-            <li><a href="api/TypeDB.html">API reference</a></li>
-            <li><a href="https://github.com/Volland/typedb-lean/tree/main/docs/guide">Guide</a></li>
-            <li><a href="https://github.com/Volland/typedb-lean">Source</a></li>
-          </ul>
-          HTML
+          mkdir -p _site
+          cp -R site/. _site/
+          cp -R docbuild/.lake/build/doc _site/api
+          touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
 
   deploy:
     needs: build

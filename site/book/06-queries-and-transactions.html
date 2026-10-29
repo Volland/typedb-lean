@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Queries and transactions · typedb-lean</title>
+  <meta name="description" content="Connecting to TypeDB from Lean, running transactions with commit and rollback, retrying conflicts, reading rows, folds, streams and documents, and running transactions concurrently with Std.Async.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html">Introduction</a></li>
+      <li><a href="01-why.html">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html" aria-current="page">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#connect">Connecting</a></li>
+      <li><a href="#run">Running a transaction</a></li>
+      <li><a href="#bodies">Inside a body</a></li>
+      <li><a href="#retry">Retrying conflicts</a></li>
+      <li><a href="#reading">Reading answers</a></li>
+      <li><a href="#decoders">Decoders by hand</a></li>
+      <li><a href="#documents">Documents</a></li>
+      <li><a href="#async">Concurrency</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Chapter 6</div>
+    <h1>Queries and transactions</h1>
+    <p class="lead">This chapter covers the everyday API: opening a driver, running transactions, getting answers back in the shape you want, and running several transactions at once.</p>
+
+    <h2 id="connect">Connecting</h2>
+    <p>A <code>Driver</code> is one connection to a server, shared by every transaction and thread that uses it. <code>Driver.withDriver</code> opens it, runs your code, and closes it:</p>
+    <pre><code class="lang-lean">import TypeDB
+open TypeDB
+
+def main : IO Unit := do
+  let r ← (Driver.withDriver { address := "127.0.0.1:1729" } fun d => do
+    d.ensureDatabase "pub"
+    -- transactions go here
+    : EIO TypeDBError Unit).toBaseIO
+  if let .error e := r then IO.eprintln e</code></pre>
+    <p>The <code>Config</code> also takes <code>username</code>, <code>password</code>, <code>tls</code> (<code>.disabled</code>, <code>.system</code> or <code>.rootCA path</code>) and <code>requestTimeoutMs</code>. Databases are managed on the driver with <code>createDatabase</code>, <code>ensureDatabase</code>, <code>databaseExists</code>, <code>deleteDatabase</code> and <code>databases</code>.</p>
+
+    <h2 id="run">Running a transaction</h2>
+    <p>You hand the driver a database name, a mode and a body:</p>
+    <pre><code class="lang-lean">d.runSync "pub" .write body     -- EIO TypeDBError α, on this thread
+d.run     "pub" .write body     -- EAsync TypeDBError α, on its own thread</code></pre>
+    <p>The mode you pass must match the body's type: <code>body : Tx .write α</code> goes with <code>.write</code>. Both functions follow the same steps:</p>
+    <ol>
+      <li>Open a transaction of that mode.</li>
+      <li>Run the body.</li>
+      <li>If the body succeeds, commit (write and schema mode) or close (read mode), and return its result.</li>
+      <li>If the body fails, close the transaction <em>without</em> committing and return the error.</li>
+    </ol>
+    <p>There is no way to forget a commit or leak an open transaction: the transaction exists only for the length of the body. <code>TxOptions</code> tunes it:</p>
+    <pre><code class="lang-lean">d.runSync "pub" .read (opts := { timeoutMs := 10000, prefetch := 1024 }) body</code></pre>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>timeoutMs</code></td><td>0 (server default)</td><td>transaction timeout</td></tr>
+        <tr><td><code>prefetch</code></td><td>512</td><td>answers the server sends ahead of the client</td></tr>
+        <tr><td><code>batchSize</code></td><td>256</td><td>rows decoded per native call</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="bodies">Inside a body</h2>
+    <p>A body is an ordinary <code>do</code> block. It can call <code>IO</code> (an <code>IO</code> error becomes <code>TypeDBError.io</code>), raise its own error with <code>Tx.fail</code>, catch errors with <code>try … catch</code>, and call helpers of the same or a weaker mode:</p>
+    <pre><code class="lang-lean">def transferReview (from_ to : String) : Tx .write Unit := do
+  let n ← countPeople                    -- a read helper, lifted
+  if n == 0 then Tx.fail (.internal "no people")
+  exec typeql!"match $r isa review, links (reviewer: $p); $p has email {from_};
+    $q isa person, has email {to};
+    delete links (reviewer: $p) of $r;
+    insert $r links (reviewer: $q);"
+  IO.println s!"moved reviews from {from_} to {to}"</code></pre>
+    <p>Everything in the body is one atomic unit. If the <code>IO.println</code> failed, the reviews would not move. <code>Tx.rollback</code> discards the writes made so far without ending the transaction.</p>
+
+    <h2 id="retry">Retrying conflicts</h2>
+    <p>TypeDB detects conflicting writes when a transaction commits. The transaction that commits second fails with <code>TypeDBError.conflict</code>. A retry policy re-runs the whole body when, and only when, the commit loses a conflict:</p>
+    <pre><code class="lang-lean">d.runSync "pub" .write (retry := .conflicts 5 (.exponential 20)) body</code></pre>
+    <p>The body runs at most six times, waiting 20 ms, 40 ms, 80 ms and so on (capped at 5 s) between attempts. <code>.constant ms</code> and <code>.none</code> are the other backoffs. Any other error is returned immediately. Because the body runs again, any <code>IO</code> it performs runs again too, so keep side effects that must happen once outside the body.</p>
+
+    <h2 id="reading">Reading answers</h2>
+    <p>Pick the function by the shape of answer you want:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Function</th><th>Returns</th></tr></thead>
+      <tbody>
+        <tr><td><code>exec q</code></td><td>nothing; runs for the effect</td></tr>
+        <tr><td><code>query (α := T) q</code></td><td><code>Array T</code>, every row</td></tr>
+        <tr><td><code>query1? q</code></td><td><code>Option T</code>, the first row if any</td></tr>
+        <tr><td><code>queryOne q</code></td><td><code>T</code>, the first row, or an error</td></tr>
+        <tr><td><code>queryFold q init f</code>, <code>queryFoldM</code></td><td>a fold over the rows, in constant memory</td></tr>
+        <tr><td><code>for x in stream (α := T) q do …</code></td><td>a loop over the rows, in constant memory</td></tr>
+        <tr><td><code>fetch (α := T) q</code>, <code>fetchJson q</code></td><td>the documents of a <code>fetch</code> query</td></tr>
+        <tr><td><code>Tx.answer q</code></td><td>the raw answer: <code>ok</code>, <code>rows</code> or <code>docs</code></td></tr>
+      </tbody>
+    </table></div>
+    <p><code>query</code> builds an array, which is fine for small answers. For large ones, fold or loop. Rows are decoded one batch at a time and the memory used stays the same however many rows there are:</p>
+    <pre><code class="lang-lean">let total ← queryFold (α := Col "y" Int64) typeql!"match $b isa book, has year $y;" 0
+  fun s y => s + y.val.toInt
+
+for b in stream (α := Col "t" String) typeql!"match $b isa book, has title $t;" do
+  if b.val.startsWith "Typed" then
+    IO.println b.val
+    break</code></pre>
+    <p>Values from Lean go into queries through interpolation, with the type checks from <a href="05-types-everywhere.html#escaping">chapter 5</a>:</p>
+    <pre><code class="lang-lean">def booksAfter (year : Int64) : Tx .read (Array (Col "t" String)) :=
+  query typeql!"match $b isa book, has year $y, has title $t; $y > {year};"</code></pre>
+
+    <h2 id="decoders">Decoders by hand</h2>
+    <p><code>deriving FromRow</code> covers most cases. When you want a tuple or a computed shape without declaring a structure, build a <code>RowDecoder</code> from <code>col</code> and <code>colOpt</code>. Decoders are applicative, so <code>&lt;$&gt;</code> and <code>&lt;*&gt;</code> combine them:</p>
+    <pre><code class="lang-lean">def titleYear : RowDecoder (String × Option Int64) :=
+  Prod.mk &lt;$&gt; col "title" &lt;*&gt; colOpt "year"
+
+let rows ← queryWith titleYear
+  typeql!"match $b isa book, has title $title; try \{ $b has year $year; };"
+-- #[("Typed Graphs", some 2026)]</code></pre>
+    <p>A decoder knows which columns it reads and what it needs from each one: a value, a type label or an IID. That plan is passed to the native layer, which returns exactly those parts for a whole batch of rows in one call. This is where most of the library's speed comes from.</p>
+
+    <h2 id="documents">Documents</h2>
+    <p>A <code>fetch</code> query returns JSON documents. Decode them into structures with <code>Lean.FromJson</code>, or keep them as <code>Json</code> with <code>fetchJson</code>:</p>
+    <pre><code class="lang-lean">structure Doc where
+  name : String
+  deriving Lean.FromJson
+
+let docs ← fetch (α := Doc) typeql!"match $p isa person; fetch \{ \"name\": $p.name };"</code></pre>
+
+    <h2 id="async">Concurrency</h2>
+    <p><code>Driver.run</code> returns a <code>Std.Async.EAsync TypeDBError α</code>. The C driver blocks the thread it runs on, so each such transaction gets a dedicated thread and the shared task pool stays free. Combine runs with the standard combinators and wait for the result with <code>.block</code>:</p>
+    <pre><code class="lang-lean">let (people, books) ← (Std.Async.EAsync.concurrently
+    (d.run "pub" .read (Entity.all (α := Person)))
+    (d.run "pub" .read (Entity.count (α := Book)))).block
+IO.println s!"{people.size} people, {books} books"</code></pre>
+    <p><code>EAsync.concurrentlyAll</code> runs an array of transactions at once, and <code>EAsync.race</code> returns the first result. If any combined transaction fails, the whole computation fails with that transaction's <code>TypeDBError</code>. One driver can serve any number of concurrent transactions; inside a single transaction, the body runs sequentially.</p>
+    <p>Concurrent writes that touch the same data may conflict. Give each one a retry policy, and the losers will re-run against the winners' committed state.</p>
+
+    <div class="callout book">
+      <strong>To learn more</strong>
+      <p>Query patterns for agent memory, such as recall by context, temporal queries and provenance, are worked through in <a href="https://leanpub.com/typedbforedgeaiagents"><em>TypeDB for Edge AI Agents</em></a>.</p>
+    </div>
+
+    <nav class="pager"><a class="prev" href="05-types-everywhere.html"><small>Previous</small>5. Types everywhere</a><a class="next" href="07-building-an-app.html"><small>Next</small>7. Building an app</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

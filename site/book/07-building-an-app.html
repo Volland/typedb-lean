@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Building an app · typedb-lean</title>
+  <meta name="description" content="The social network example end to end: mapped types, migrations with checksums and rollback, seeding, typed reports, concurrent reads, testing, performance, and further reading.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html">Introduction</a></li>
+      <li><a href="01-why.html">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html" aria-current="page">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#project">The project</a></li>
+      <li><a href="#types">The types</a></li>
+      <li><a href="#migrations">Migrations</a></li>
+      <li><a href="#seed">Writing data</a></li>
+      <li><a href="#report">Reading it back</a></li>
+      <li><a href="#main">Putting it together</a></li>
+      <li><a href="#testing">Testing</a></li>
+      <li><a href="#performance">Performance</a></li>
+      <li><a href="#further">Further reading</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Chapter 7</div>
+    <h1>Building an app</h1>
+    <p class="lead">The repository's social network example uses every part of the library in one program of about 130 lines. This chapter walks through it and then covers what an application needs beyond it: schema evolution, tests and performance.</p>
+
+    <h2 id="project">The project</h2>
+    <p>The example lives in <a href="https://github.com/Volland/typedb-lean/blob/main/examples/social/Social.lean"><code>examples/social/Social.lean</code></a>. With a server running, run it from the repository:</p>
+    <pre><code class="lang-sh">docker run -d --name typedb -p 1729:1729 typedb/typedb:3.14.0
+lake exe social                                   # uses TYPEDB_ADDRESS, default 127.0.0.1:1729</code></pre>
+    <p>In your own project, add the library to <code>lakefile.lean</code> and define an executable:</p>
+    <pre><code class="lang-lean">require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"
+
+lean_exe social where
+  root := `Social</code></pre>
+    <p>The first <code>lake build</code> clones TypeDB's driver at the pinned version and builds its C library with cargo, so you need a Rust toolchain and <code>protoc</code>, the protobuf compiler; later builds reuse it.</p>
+
+    <h2 id="types">The types</h2>
+    <p>The domain has people, employees, friendships, endorsements of friendships, posts and authorship. It covers an entity, a subtype, a relation, a relation playing a role, and attributes of several value types:</p>
+    <pre><code class="lang-lean">@[typedb "person"]
+structure Person where
+  email : Key String
+  name : String
+  age : Option Int64 := none
+  tags : Array String := #[]
+  deriving Repr, Entity
+
+structure Employee extends Person where
+  company : String
+  salary : Decimal
+  deriving Repr, Entity
+
+structure Friendship where
+  a : Role "friend" (Ref Person)
+  b : Role "friend" (Ref Person)
+  since : Std.Time.PlainDate
+  deriving Repr, Relation
+
+/-- A relation whose `endorsed` player is itself a relation. -/
+structure Endorsement where
+  endorsed : Role "endorsed" (Ref Friendship)
+  endorser : Role "endorser" (Ref Person)
+  note : Option String := none
+  deriving Repr, Relation
+
+structure Post where
+  id : Key String
+  body : String
+  tags : Array String := #[]
+  postedAt : DatetimeTZ
+  deriving Repr, Entity
+
+structure Authorship where
+  author : Role "author" (Ref Person)
+  post : Role "post" (Ref Post)
+  deriving Repr, Relation
+
+def schema : List TypeSpec :=
+  [TypeSpec.of Person, TypeSpec.of Employee, TypeSpec.of Friendship, TypeSpec.of Endorsement,
+   TypeSpec.of Post, TypeSpec.of Authorship]</code></pre>
+    <p>Two read-side types complete it. <code>AnyPerson</code> decodes every person as a <code>Person</code> or an <code>Employee</code>, and <code>FriendOf</code> is the row type of a hand-written query:</p>
+    <pre><code class="lang-lean">inductive AnyPerson where
+  | person (p : Person)
+  | employee (e : Employee)
+  deriving Repr, Polymorphic
+
+structure FriendOf where
+  name : String
+  friend : String
+  deriving Repr, FromRow</code></pre>
+
+    <h2 id="migrations">Migrations</h2>
+    <p>A real database outlives any one version of your program, so its schema is changed by migrations rather than by a single <code>define</code>. A migration is a list of versioned steps:</p>
+    <pre><code class="lang-lean">def migrations : List Migration := [
+  Migration.define 1 "social schema" schema,
+  Migration.tql 2 "nicknames"
+    "define attribute nickname, value string; person owns nickname;"
+    (down := some "undefine owns nickname from person; nickname;"),
+  { version := 3, name := "default nickname", fingerprint := "nickname := name, v1"
+    up := exec typeql!"match $p isa person, has name $n; not \{ $p has nickname $k; }; insert $p has nickname == $n;"
+    down := .step (exec typeql!"match $p isa person, has nickname $k; delete has $k of $p;") }
+]</code></pre>
+    <p>Step 1 defines the ORM schema. Step 2 is plain TypeQL with a <code>down</code> step that undoes it. Step 3 is Lean code that backfills data: every person without a nickname gets their name as one.</p>
+    <pre><code class="lang-lean">let report ← d.migrateSync "social" migrations           -- the steps it ran
+let report ← d.rollbackSync "social" migrations (to := 1) -- undo down to version 1
+let history ← Migrations.history d "social"</code></pre>
+    <p>The rules:</p>
+    <ul>
+      <li><strong>Versions are unique and increasing.</strong> <code>migrate</code> applies, in order, every step newer than the latest applied one.</li>
+      <li><strong>Each step is atomic.</strong> It runs in its own schema transaction together with its history record, stored as <code>typedb-lean-migration</code> entities in the same database. If a step fails, neither its changes nor its record are committed, the earlier steps stay applied, and the error names the version. Since schema transactions can also write data, a step can change the schema and backfill data in one commit.</li>
+      <li><strong>Applied steps are checksummed.</strong> Each step has a checksum of its name and fingerprint. If an applied step's checksum differs from the one in your list, because someone edited a migration that already ran, <code>migrate</code> stops before running anything. Steps written in TypeQL use their text as the fingerprint. Lean code cannot be hashed, so a step written as code must give a <code>fingerprint</code> that you change whenever you change the code.</li>
+      <li><strong>Rollback runs <code>down</code> steps newest first,</strong> each together with the removal of its record. A step marked <code>.irreversible</code> stops the rollback before it.</li>
+    </ul>
+
+    <h2 id="seed">Writing data</h2>
+    <p>The seed is one write transaction. Each insert returns a typed reference that the next insert uses:</p>
+    <pre><code class="lang-lean">def seed : Tx .write (Ref Post) := do
+  let ann ← Entity.insert { email := "ann@example.com", name := "Ann", age := some 34, tags := #["lean", "graphs"] : Person }
+  let bob ← Entity.insert { email := "bob@example.com", name := "Bob", company := "Acme", salary := 4200, tags := #["rust"] : Employee }
+  discard &lt;| Entity.insert { email := "cy@example.com", name := "Cy \"the quoted\"" : Person }
+  let f ← Relation.insert { a := ann, b := bob.up, since := Std.Time.PlainDate.ofYearMonthDayClip 2021 3 14 : Friendship }
+  discard &lt;| Relation.insert { endorsed := f, endorser := Ref.key (α := Person) "cy@example.com", note := some "true friends" : Endorsement }
+  let at_ := DatetimeTZ.ofLocalFixed (Std.Time.PlainDateTime.ofEpochDay ⟨19000⟩ ⟨⟨9, by decide⟩, ⟨30, by decide⟩, ⟨0, by decide⟩, ⟨0, by decide⟩⟩) 3600
+  let post ← Entity.insert { id := "p1", body := "Typed graphs from Lean", tags := #["lean"], postedAt := at_ : Post }
+  discard &lt;| Relation.insert { author := ann, post := post : Authorship }
+  return post</code></pre>
+    <p>Note what you do not see: no query strings, no escaping (Cy's name contains quotes), and no conversions for the <code>Decimal</code> salary, the <code>PlainDate</code> or the zoned post time. <code>bob.up</code> turns the <code>Ref Employee</code> into the <code>Ref Person</code> that the friendship expects. The endorsement refers to Cy by key, without looking up an IID. If anything fails, nothing is committed.</p>
+
+    <h2 id="report">Reading it back</h2>
+    <p>The report is a read transaction that mixes the ORM, a typed query and a fold:</p>
+    <pre><code class="lang-lean">def report : Tx .read Unit := do
+  IO.println "-- people (polymorphic):"
+  for (_, p) in ← Polymorphic.all (α := AnyPerson) do
+    match p with
+    | .person p => IO.println s!"  person   {p.name} &lt;{p.email}&gt; tags={p.tags}"
+    | .employee e => IO.println s!"  employee {e.name} at {e.company}, salary {e.salary}"
+  IO.println "-- friendships (typed query):"
+  for r in stream (α := FriendOf) typeql!"match $f isa friendship, links (friend: $x, friend: $y);
+      $x has name $name; $y has name $friend;" do
+    IO.println s!"  {r.name} ↔ {r.friend}"
+  let nicknames ← queryFold (α := Col "k" String) typeql!"match $p isa person, has nickname $k;" 0 fun n _ => n + 1
+  IO.println s!"-- {nicknames} nicknames, {← Entity.count (α := Person)} people, {← Relation.count (α := Endorsement)} endorsements"</code></pre>
+    <p>The <code>nickname</code> attribute was added by migration 2, not by a Lean structure. Raw queries can use any part of the schema; only the ORM operations need mapped types.</p>
+
+    <h2 id="main">Putting it together</h2>
+    <pre><code class="lang-lean">def main : IO UInt32 := do
+  let address := (← IO.getEnv "TYPEDB_ADDRESS").getD "127.0.0.1:1729"
+  let result ← (Driver.withDriver { address } fun d => do
+    if ← d.databaseExists "social" then d.deleteDatabase "social"
+    d.createDatabase "social"
+    let applied ← d.migrateSync "social" migrations
+    IO.println s!"-- migrations applied: {applied.steps.toList}"
+    d.runSync "social" .read (Schema.verify! schema)
+    let post ← d.runSync "social" .write seed
+    let ann := Ref.key (α := Person) "ann@example.com"
+    d.runSync "social" .write (Entity.update ann Person.field.age (some 35))
+    d.runSync "social" .read report
+    -- Two read transactions at once, on their own threads.
+    let (people, posts) ← (Std.Async.EAsync.concurrently
+      (d.run "social" .read (Entity.all (α := Person)))
+      (d.run "social" .read (Entity.all (α := Post)))).block
+    IO.println s!"-- concurrently: {people.size} people, {posts.size} posts"
+    if let some p ← d.runSync "social" .read (Entity.get? post) then
+      IO.println s!"-- post {p.id}: {p.body} at {render p.postedAt}"
+    d.runSync "social" .write (Entity.delete post)
+    IO.println s!"-- post deleted: {(← d.runSync "social" .read (Entity.get? post)).isNone}"
+    : EIO TypeDBError Unit).toBaseIO
+  match result with
+  | .ok () => return 0
+  | .error e => IO.eprintln s!"error: {e}"; return 1</code></pre>
+    <p>The order is the one to copy in a real service: migrate, then <strong>verify the schema</strong>, then serve. After <code>Schema.verify!</code> passes, the structures the program was compiled against match the database it is talking to. <code>Entity.update</code> takes a typed field handle, <code>Person.field.age</code>, so the new value must be an <code>Option Int64</code>.</p>
+
+    <h2 id="testing">Testing</h2>
+    <p>The library's own tests show a pattern that works for applications too: unit tests that need no server, and integration tests against a real TypeDB in a container, each with a fresh database.</p>
+    <pre><code class="lang-sh">lake test                                   # unit tests, then integration tests in a typedb/typedb container
+lake test -- --unit                         # unit tests only, no Docker needed
+lake test -- orm:                           # only tests whose names contain "orm:"
+TYPEDB_ADDRESS=127.0.0.1:1729 lake test     # use a server you already run</code></pre>
+    <p>The things you would otherwise test for, such as a write in a read transaction or an unescaped value, do not compile, so there is nothing to test. The library pins its compile errors with <code>#guard_msgs</code> in <code>tests/CompileChecks.lean</code>, and you can do the same for invariants of your own API.</p>
+
+    <h2 id="performance">Performance</h2>
+    <p>Types cost nothing at run time here. Modes and <code>Allows</code> proofs are erased, and <code>Tx</code> compiles to a plain reader over <code>EIO</code>, so loops in transaction bodies become plain loops. The work that remains is decoding, and it is batched: a decoder's plan tells the native layer which concepts and which parts of them to return, for up to <code>batchSize</code> rows per call. Against the official Rust driver, on the same server and driver version:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Workload</th><th class="num">typedb-lean</th><th class="num">Rust driver</th></tr></thead>
+      <tbody>
+        <tr><td>Scan of 100,000 rows into structures</td><td class="num">155,368 rows/s</td><td class="num">142,061 rows/s</td></tr>
+        <tr><td>Point lookup, p50 / p99</td><td class="num">1.05 / 1.52 ms</td><td class="num">1.03 / 2.39 ms</td></tr>
+        <tr><td>Bulk insert of 10,000 entities</td><td class="num">4.75 s</td><td class="num">4.71 s</td></tr>
+        <tr><td>16 concurrent read transactions</td><td class="num">367 ms</td><td class="num">607 ms</td></tr>
+      </tbody>
+    </table></div>
+    <p>Some practical advice: stream or fold large answers instead of building arrays; raise <code>prefetch</code> for big scans; run independent reads concurrently with <code>Driver.run</code>; and batch many inserts into one transaction. See the <a href="../benchmarks.html">benchmarks page</a> for the method and how to reproduce it.</p>
+
+    <h2 id="further">Further reading</h2>
+    <div class="callout book book-promo">
+      <div class="book-cover">TypeDB for Edge AI Agents<small>Volodymyr Pavlyshyn</small></div>
+      <div>
+        <strong>TypeDB for Edge AI Agents</strong>
+        <p>The full book on TypeDB: its model, TypeQL, schema design, and using a typed knowledge graph as long-term memory for AI agents running on the edge. It is the natural next step after this mini book.</p>
+        <p><a href="https://leanpub.com/typedbforedgeaiagents">Get it on Leanpub →</a></p>
+      </div>
+    </div>
+    <p>More by the same author, on Leanpub:</p>
+    <ul>
+      <li><a href="https://leanpub.com/dependenttypesdttlogicholforaiagentreadyknowledgegraphs"><em>Dependent Types (DTT) &amp; Logic for AI Agent Ready Knowledge Graphs</em></a>: the type theory behind chapter 5, applied to knowledge graphs.</li>
+      <li><a href="https://leanpub.com/metagraphforaiagents"><em>Metagraph for AI Agents</em></a>: hypergraphs, metagraphs and reification, the ideas behind relations that play roles.</li>
+    </ul>
+    <p>Reference documentation:</p>
+    <ul>
+      <li><a href="https://typedb.com/docs">TypeDB documentation</a>: TypeQL reference, schema design, server operation.</li>
+      <li><a href="https://lean-lang.org/documentation/">Lean documentation</a>: language reference and standard library.</li>
+      <li><a href="https://lean-lang.org/functional_programming_in_lean/"><em>Functional Programming in Lean</em></a>: Lean as a programming language.</li>
+      <li><a href="https://lean-lang.org/theorem_proving_in_lean4/"><em>Theorem Proving in Lean 4</em></a>: the logic and type theory underneath.</li>
+      <li><a href="../guide.html">The typedb-lean guide</a> and the <a href="../api/TypeDB.html">API reference</a>.</li>
+    </ul>
+
+    <nav class="pager"><a class="prev" href="06-queries-and-transactions.html"><small>Previous</small>6. Queries and transactions</a><a class="next" href="index.html"><small>Back to</small>Contents</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

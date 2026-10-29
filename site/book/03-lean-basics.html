@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Just enough Lean · typedb-lean</title>
+  <meta name="description" content="The Lean 4 you need for typedb-lean: structures, inductive types, pattern matching, type classes, deriving, do-notation and monads, types indexed by values, and macros.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html">Introduction</a></li>
+      <li><a href="01-why.html">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html" aria-current="page">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#setup">Setting up</a></li>
+      <li><a href="#data">Definitions and data</a></li>
+      <li><a href="#classes">Type classes and deriving</a></li>
+      <li><a href="#do">Effects and do-notation</a></li>
+      <li><a href="#dependent">Types that mention values</a></li>
+      <li><a href="#macros">Macros</a></li>
+      <li><a href="#next">Where to learn more Lean</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Chapter 3</div>
+    <h1>Just enough Lean</h1>
+    <p class="lead">Lean 4 is a functional programming language with a very expressive type system. This chapter covers the parts typedb-lean relies on, using small examples you can paste into a file.</p>
+
+    <h2 id="setup">Setting up</h2>
+    <p>Install <a href="https://github.com/leanprover/elan">elan</a>, the Lean version manager. It picks the toolchain named in a project's <code>lean-toolchain</code> file. <code>lake</code> is Lean's build tool and package manager:</p>
+    <pre><code class="lang-sh">curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh
+lake new myapp exe
+cd myapp &amp;&amp; lake build &amp;&amp; lake exe myapp</code></pre>
+    <p>The VS Code extension for Lean shows types, errors and the results of <code>#eval</code> as you type. Most of learning Lean is reading what the editor tells you.</p>
+
+    <h2 id="data">Definitions and data</h2>
+    <p><code>def</code> defines a value or function. Types come after a colon, and arguments are written in parentheses:</p>
+    <pre><code class="lang-lean">def greet (name : String) : String := s!"Hello, {name}!"</code></pre>
+    <p><code>s!"…"</code> is string interpolation. A <code>structure</code> is a record. Fields can have defaults, and <code>Option α</code> is a value that may be missing (<code>some x</code> or <code>none</code>):</p>
+    <pre><code class="lang-lean">structure Book where
+  title : String
+  year : Nat
+  isbn : Option String := none
+  deriving Repr
+
+let b : Book := { title := "Typed Graphs", year := 2026 }   -- isbn is none
+b.title                                                    -- "Typed Graphs"</code></pre>
+    <p>An <code>inductive</code> type lists its constructors, and constructors can carry data. You take it apart with <code>match</code>, or with a function written by cases. The compiler checks that every case is covered:</p>
+    <pre><code class="lang-lean">inductive Format where
+  | paperback
+  | ebook (drm : Bool)
+
+def describe : Format → String
+  | .paperback => "paper"
+  | .ebook true => "ebook with DRM"
+  | .ebook false => "DRM-free ebook"
+
+def isbnOrDash (b : Book) : String :=
+  match b.isbn with
+  | some i => i
+  | none => "-"</code></pre>
+    <p>The leading dot in <code>.paperback</code> means "the constructor of the type expected here". You will see it all the time in typedb-lean: <code>.read</code>, <code>.write</code> and <code>.schema</code> are the constructors of <code>TxMode</code>.</p>
+    <p>Structures can extend other structures. <code>structure Employee extends Person</code> has all of <code>Person</code>'s fields plus its own. The ORM maps this to TypeDB's <code>sub</code>.</p>
+
+    <h2 id="classes">Type classes and deriving</h2>
+    <p>A type class is an interface that types implement with an <code>instance</code>. The compiler finds instances automatically, by type. This is called instance resolution:</p>
+    <pre><code class="lang-lean">class Pretty (α : Type) where
+  pretty : α → String
+
+instance : Pretty Book where
+  pretty b := s!"{b.title} ({b.year})"
+
+#eval Pretty.pretty ({ title := "Typed Graphs", year := 2026 } : Book)
+-- "Typed Graphs (2026)"</code></pre>
+    <p>If no instance exists, the program does not compile, and the error names the missing instance. typedb-lean uses this in several places. <code>ToTypeQL α</code> says how to write a value of type <code>α</code> into a query. <code>FromRow α</code> says how to decode a row into an <code>α</code>. Interpolating a value with no <code>ToTypeQL</code> instance is a compile error.</p>
+    <p><code>deriving</code> asks the compiler to generate an instance from a type's definition. <code>deriving Repr</code> generates a printer. typedb-lean adds its own deriving handlers, <code>FromRow</code>, <code>Entity</code>, <code>Relation</code> and <code>Polymorphic</code>, which read your structure's fields and generate decoders, queries and schema.</p>
+
+    <h2 id="do">Effects and do-notation</h2>
+    <p>Lean functions are pure. Effects such as printing or talking to a database are values of a <em>monad</em> type, such as <code>IO α</code>: "a program that, when run, does some I/O and returns an <code>α</code>". <code>do</code> blocks sequence them. <code>←</code> runs an effect and binds its result, and <code>let mut</code> and <code>for</code> work as in an imperative language:</p>
+    <pre><code class="lang-lean">def main : IO Unit := do
+  let b : Book := { title := "Typed Graphs", year := 2026 }
+  IO.println (Pretty.pretty b)
+  let mut total := 0
+  for y in [2024, 2025, 2026] do
+    total := total + y
+  IO.println s!"sum: {total}"</code></pre>
+    <p>Three monads matter for typedb-lean:</p>
+    <ul>
+      <li><code>IO α</code>: general I/O, failing with <code>IO.Error</code>.</li>
+      <li><code>EIO ε α</code>: I/O that fails with an error of type <code>ε</code>. Every driver call returns <code>EIO TypeDBError α</code>, so failures are typed values you can <code>match</code> on.</li>
+      <li><code>ReaderT ρ m α</code>: a computation in <code>m</code> that can also read a context of type <code>ρ</code>.</li>
+    </ul>
+    <p>A transaction body in typedb-lean is defined as</p>
+    <pre><code class="lang-lean">def Tx (_m : TxMode) (α : Type) : Type := ReaderT TxCtx (EIO TypeDBError) α</code></pre>
+    <p>It reads the open transaction (<code>TxCtx</code>), can fail with a <code>TypeDBError</code>, and returns an <code>α</code>. Because it is a monad, transaction bodies are ordinary <code>do</code> blocks with <code>for</code>, <code>try … catch</code> and calls to <code>IO</code>. Because it is a plain reader over <code>EIO</code>, the compiler turns those loops into plain loops.</p>
+    <p>To use an <code>EIO</code> computation from <code>main : IO Unit</code>, convert it with <code>.toBaseIO</code> and look at the result:</p>
+    <pre><code class="lang-lean">let r ← (someDatabaseWork : EIO TypeDBError Unit).toBaseIO
+if let .error e := r then IO.eprintln e</code></pre>
+
+    <h2 id="dependent">Types that mention values</h2>
+    <p>Look at <code>Tx</code> again. Its first parameter, <code>_m : TxMode</code>, is a <em>value</em>: <code>.read</code>, <code>.write</code> or <code>.schema</code>. So <code>Tx .read Nat</code> and <code>Tx .write Nat</code> are different types, even though <code>m</code> is never used at run time. A type that depends on a value is a <em>dependent type</em>. Here it is used in its simplest form, as a label the compiler tracks. <code>Query need</code> works the same way: a query's type records the weakest transaction that may run it.</p>
+    <p>The remaining question is how an operation says "I need at least a write transaction". The answer is a type class whose instances are <em>proofs</em>. Here is a self-contained miniature of the idea:</p>
+    <pre><code class="lang-lean">inductive Mode where
+  | read
+  | write
+
+-- A class in Prop: an instance is evidence, and carries no data at run time.
+class CanDo (cur need : Mode) : Prop
+
+instance {m : Mode} : CanDo m .read := ⟨⟩      -- every mode can read
+instance : CanDo .write .write := ⟨⟩           -- only write can write
+
+def Action (_m : Mode) : Type := IO Unit
+
+def lookup {m : Mode} [CanDo m .read] : Action m := IO.println "lookup"
+def save {m : Mode} [CanDo m .write] : Action m := IO.println "save"
+
+def ok : Action .write := save
+def alsoOk : Action .write := lookup
+def broken : Action .read := save</code></pre>
+    <pre><code class="lang-text">error: failed to synthesize instance of type class
+  CanDo Mode.read Mode.write</code></pre>
+    <p>Square brackets mark an <em>instance argument</em>: the caller does not pass it, and the compiler must find it. For <code>broken</code> there is no instance of <code>CanDo .read .write</code>, so the definition is rejected. typedb-lean's <code>TxMode.Allows cur need</code> is exactly this, with three modes and a proof that <code>need ≤ cur</code>. Every query operation asks for it:</p>
+    <pre><code class="lang-lean">def exec [TxMode.Allows m need] (q : Query need) : Tx m Unit</code></pre>
+    <p>Curly-brace arguments such as <code>{m : Mode}</code> are <em>implicit</em>: the compiler infers them from the other types. You will see helpers written as <code>{m : TxMode} [TxMode.Allows m .read]</code>, which reads "for any mode that can read".</p>
+
+    <h2 id="macros">Macros</h2>
+    <p>Lean's syntax is extensible. A macro or elaborator runs at compile time and turns new syntax into ordinary Lean terms. <code>typeql!"…"</code> is one. It reads the query literal, splits out the <code>{…}</code> interpolations, wraps each in a <code>ToTypeQL</code> call, scans the text for keywords such as <code>insert</code> or <code>define</code>, and produces a term of type <code>Query .read</code>, <code>Query .write</code> or <code>Query .schema</code>. You can ask Lean what it built:</p>
+    <pre><code class="lang-lean">#check typeql!"insert $p isa person;"
+-- { text := … } : Query TxMode.write
+#check typeql!"match $p isa person, has name \"insert\";"
+-- { text := … } : Query TxMode.read      (keywords inside strings are ignored)</code></pre>
+    <p>Because braces mean interpolation inside <code>typeql!</code>, TypeQL's own braces are written <code>\{</code> and <code>\}</code>.</p>
+
+    <h2 id="next">Where to learn more Lean</h2>
+    <ul>
+      <li><a href="https://lean-lang.org/functional_programming_in_lean/"><em>Functional Programming in Lean</em></a>: Lean as a programming language, including monads, type classes and dependent types.</li>
+      <li><a href="https://lean-lang.org/theorem_proving_in_lean4/"><em>Theorem Proving in Lean 4</em></a>: the type theory underneath, propositions as types, and proofs.</li>
+      <li><a href="https://lean-lang.org/documentation/">Lean documentation</a>: the language reference and the standard library.</li>
+    </ul>
+    <div class="callout book">
+      <strong>To learn more</strong>
+      <p>For dependent types and logic applied to knowledge graphs, see <a href="https://leanpub.com/dependenttypesdttlogicholforaiagentreadyknowledgegraphs"><em>Dependent Types (DTT) &amp; Logic for AI Agent Ready Knowledge Graphs</em></a>. For the database side, <a href="https://leanpub.com/typedbforedgeaiagents"><em>TypeDB for Edge AI Agents</em></a>. Both are by the author of typedb-lean, on Leanpub.</p>
+    </div>
+
+    <nav class="pager"><a class="prev" href="02-typedb-basics.html"><small>Previous</small>2. TypeDB basics</a><a class="next" href="04-modeling.html"><small>Next</small>4. Modeling a domain</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

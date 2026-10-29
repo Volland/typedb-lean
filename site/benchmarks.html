@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Benchmarks · typedb-lean</title>
+  <meta name="description" content="typedb-lean against the official TypeDB Rust driver: scans, point lookups, bulk inserts and concurrent reads on the same server.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-root="." data-page="benchmarks">
+
+<div class="container doc">
+  <aside>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#workloads">Workloads</a></li>
+      <li><a href="#why">Why it is fast</a></li>
+      <li><a href="#targets">Targets and CI</a></li>
+      <li><a href="#reproduce">Reproduce</a></li>
+      <li><a href="#limits">Caveats</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Performance</div>
+    <h1>typedb-lean vs the Rust driver</h1>
+    <p class="lead">typedb-lean wraps TypeDB's official C driver, which is itself built on the Rust driver. The question is what the Lean layer costs. The answer: nothing measurable on scans, lookups and inserts, and less than the Rust baseline under concurrency.</p>
+
+    <div class="stats">
+      <div class="stat"><b>1.09×</b><span>scan throughput<br>vs Rust</span></div>
+      <div class="stat"><b>+1.5%</b><span>lookup p50<br>(within noise)</span></div>
+      <div class="stat"><b>−36%</b><span>lookup p99<br>tail latency</span></div>
+      <div class="stat"><b>1.65×</b><span>faster on 16<br>concurrent reads</span></div>
+    </div>
+
+    <h2 id="results">Results</h2>
+    <p>One run of <code>lake exe bench</code> on an Apple M-series laptop, TypeDB 3.14.0 in Docker, both clients on driver version 3.14.0, against the same server and the same data.</p>
+    <div class="legend"><span><i style="background:var(--bar-lean)"></i>typedb-lean (Lean 4)</span><span><i style="background:var(--bar-rust)"></i>typedb-driver (Rust)</span></div>
+
+    <div class="bench">
+      <div class="bench-row">
+        <header><h3>Scan of 100,000 rows into structures</h3><span class="verdict">Lean 9% faster</span></header>
+        <div class="note">rows per second · higher is better</div>
+        <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">155,368</span></div>
+        <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:91.4%"></div></div><span class="val">142,061</span></div>
+      </div>
+      <div class="bench-row">
+        <header><h3>Point lookup, p50</h3><span class="verdict even">on par</span></header>
+        <div class="note">one read transaction per lookup · lower is better</div>
+        <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">1.05 ms</span></div>
+        <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:98.5%"></div></div><span class="val">1.03 ms</span></div>
+      </div>
+      <div class="bench-row">
+        <header><h3>Point lookup, p99</h3><span class="verdict">Lean 36% lower</span></header>
+        <div class="note">tail latency over 1,000 lookups · lower is better</div>
+        <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:63.6%"></div></div><span class="val">1.52 ms</span></div>
+        <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">2.39 ms</span></div>
+      </div>
+      <div class="bench-row">
+        <header><h3>Bulk insert of 10,000 entities</h3><span class="verdict even">on par</span></header>
+        <div class="note">one write transaction, one insert query per entity · lower is better</div>
+        <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">4.75 s</span></div>
+        <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:99.1%"></div></div><span class="val">4.71 s</span></div>
+      </div>
+      <div class="bench-row">
+        <header><h3>16 concurrent read transactions of 10,000 rows</h3><span class="verdict">Lean 1.65× faster</span></header>
+        <div class="note">wall-clock time for all 16 · lower is better</div>
+        <div class="bar lean"><span>typedb-lean</span><div class="track"><div class="fill" style="width:60.5%"></div></div><span class="val">367 ms</span></div>
+        <div class="bar rust"><span>Rust</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="val">607 ms</span></div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Workload</th><th class="num">typedb-lean</th><th class="num">Rust driver</th><th class="num">Lean / Rust</th></tr></thead>
+        <tbody>
+          <tr><td>Scan, rows/s</td><td class="num">155,368</td><td class="num">142,061</td><td class="num">1.09</td></tr>
+          <tr><td>Lookup p50</td><td class="num">1,048 µs</td><td class="num">1,033 µs</td><td class="num">1.02</td></tr>
+          <tr><td>Lookup p99</td><td class="num">1,521 µs</td><td class="num">2,393 µs</td><td class="num">0.64</td></tr>
+          <tr><td>Bulk insert</td><td class="num">4,749 ms</td><td class="num">4,708 ms</td><td class="num">1.01</td></tr>
+          <tr><td>16 concurrent reads</td><td class="num">367 ms</td><td class="num">607 ms</td><td class="num">0.60</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="workloads">Workloads</h2>
+    <p>The benchmark loads 100,000 <code>person</code> entities, each with an <code>email</code> key, a <code>name</code> and an <code>age</code>. Then it runs the same four workloads with this library and with a Rust program that uses <code>typedb-driver</code> directly (<code>bench/rust</code>). Both clients warm up first.</p>
+    <pre><code class="lang-typeql">define
+  attribute email, value string;
+  attribute name, value string;
+  attribute age, value integer;
+  entity person, owns email @key, owns name, owns age;</code></pre>
+    <ul>
+      <li><b>Scan.</b> One read transaction runs <code>match $p isa person, has email $e, has name $n, has age $a; limit 100000;</code> and decodes every row into a structure of three fields. In Lean that is <code>query (α := Person)</code> with <code>deriving FromRow</code>; in Rust, a <code>decode</code> function that reads the three columns.</li>
+      <li><b>Point lookup.</b> 1,000 lookups by email, each in its own read transaction, so the time includes opening and closing the transaction. p50 and p99 are taken over all of them.</li>
+      <li><b>Bulk insert.</b> A fresh database, then one write transaction with 10,000 separate <code>insert</code> queries and a commit.</li>
+      <li><b>Concurrent reads.</b> 16 read transactions at once, each scanning 10,000 rows. Lean uses <code>EAsync.concurrentlyAll</code> over <code>Driver.run</code>; Rust uses 16 scoped threads.</li>
+    </ul>
+    <pre><code class="lang-lean">-- The Lean side of the scan and the concurrent reads, from bench/Bench.lean
+structure Person where
+  e : String
+  n : String
+  a : Int64
+  deriving FromRow
+
+let rows ← d.runSync db .read (opts := { batchSize := 512 }) (query (α := Person) (scanQuery s.scan))
+
+discard &lt;| (EAsync.concurrentlyAll ((Array.range 16).map fun _ =>
+  d.run db .read (opts := { batchSize := 512 }) (query (α := Person) (scanQuery 10000)))).block</code></pre>
+
+    <h2 id="why">Why a wrapper can match the native driver</h2>
+    <p>Calling Rust through C from Lean adds a boundary crossing per call. The library makes those crossings rare and cheap:</p>
+    <ul>
+      <li><b>Batched decoding.</b> A <code>RowDecoder</code> knows its columns and what it needs from each (a value, a type label or an IID). One native call returns those for up to <code>batchSize</code> rows, with no intermediate object per concept.</li>
+      <li><b>Prefetch 512.</b> The server streams up to <code>prefetch</code> answers ahead of the client. typedb-lean sets 512 by default; with the C driver's smaller default, a scan waits on the network.</li>
+      <li><b>Closing in the background.</b> Closing a transaction does not wait for the driver to finish, like the Rust driver's <code>drop</code>.</li>
+      <li><b>Loops compile to loops.</b> <code>Tx</code> is a <code>ReaderT</code> over <code>EIO</code>, so <code>for</code> in a transaction body compiles to a plain loop.</li>
+      <li><b>Dedicated threads.</b> Each async transaction blocks only its own thread, and one driver connection multiplexes all of them.</li>
+    </ul>
+    <p>The Rust baseline uses the driver's defaults. It is not tuned, so read the concurrency result as "the Lean layer adds no contention", not as "Lean is faster than Rust".</p>
+
+    <h2 id="targets">Targets and CI</h2>
+    <p>The benchmark is a test, not just a report. It fails unless:</p>
+    <ul>
+      <li>the scan reaches at least <b>80%</b> of the Rust driver's rows per second, and</li>
+      <li>the lookup p50 is at most <b>1.1×</b> the Rust driver's.</li>
+    </ul>
+    <p>CI runs <code>lake exe bench --ci</code> on Linux x86_64 on every push: 20,000 rows, 300 lookups and 2,000 inserts, with the targets relaxed by another 10% for shared runners.</p>
+
+    <h2 id="reproduce">Reproduce</h2>
+    <p>You need Docker, a Rust toolchain and <code>protoc</code>. Without <code>TYPEDB_ADDRESS</code>, the benchmark starts a <code>typedb/typedb</code> container at the pinned version and removes it afterwards.</p>
+    <pre><code class="lang-sh">lake exe bench              # full sizes, enforces the targets, writes bench/report.json
+lake exe bench --ci         # reduced sizes, targets relaxed by 10%
+lake exe bench --profile    # also times draining, fetching and decoding separately
+TYPEDB_ADDRESS=127.0.0.1:1729 lake exe bench   # use a server you already run</code></pre>
+    <p>The report has both clients' numbers side by side:</p>
+    <pre><code class="lang-text">{"sizes": {"scan": 100000, "lookups": 1000, "bulk": 10000},
+ "rust": {"scan_rows_per_s": 142060.9, "lookup_p50_us": 1032.5, "lookup_p99_us": 2393,
+          "bulk_insert_ms": 4707.6, "concurrent_reads_ms": 607.3, ...},
+ "lean": {"scan_rows_per_s": 155367.8, "lookup_p50_us": 1048.5, "lookup_p99_us": 1521.4,
+          "bulk_insert_ms": 4749.2, "concurrent_reads_ms": 367.2, ...}}</code></pre>
+
+    <h2 id="limits">Caveats</h2>
+    <ul>
+      <li>These numbers are from one laptop with the server in Docker. Absolute values depend on the machine and the network; the ratios are what the benchmark checks.</li>
+      <li>Bulk insert time is dominated by the server, which is why both clients take the same time. The benchmark's loader puts 100 entities in each <code>insert</code> query to cut round trips; the measured workload deliberately does not.</li>
+      <li>The upstream driver (3.14.0) keeps about 600 bytes per transaction it has opened, in its Rust and C APIs alike, so processes that open millions of transactions grow accordingly.</li>
+    </ul>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

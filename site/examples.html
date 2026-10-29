@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Examples · typedb-lean</title>
+  <meta name="description" content="typedb-lean examples: a social network, a bank transfer with conflict retry, mode-generic helpers, streaming exports, fetch documents, polymorphic reads, concurrency and migrations.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-root="." data-page="examples">
+
+<div class="container doc">
+  <aside>
+    <h4>Examples</h4>
+    <ul>
+      <li><a href="#social">A social network</a></li>
+      <li><a href="#bank">Bank transfer with retry</a></li>
+      <li><a href="#generic">Mode-generic helpers</a></li>
+      <li><a href="#stream">Streaming and folds</a></li>
+      <li><a href="#fetch">Fetch documents</a></li>
+      <li><a href="#poly">Polymorphic reads</a></li>
+      <li><a href="#concurrent">Concurrent transactions</a></li>
+      <li><a href="#migrations">Migrations with backfill</a></li>
+      <li><a href="#errors">What does not compile</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Examples</div>
+    <h1>Examples</h1>
+    <p class="lead">Small, complete programs. Each one compiles against the library; start a server with <code>docker run -d -p 1729:1729 typedb/typedb:3.14.0</code> to run them.</p>
+
+    <h2 id="social">A social network</h2>
+    <p>The repository's example program uses every feature at once: entities, a subtype, relations, a relation that plays a role in another relation, migrations, ORM reads and writes, typed queries, streaming, polymorphic decoding and concurrent transactions. Run it with <code>lake exe social</code>.</p>
+    <pre><code class="lang-lean">@[typedb "person"]
+structure Person where
+  email : Key String
+  name : String
+  age : Option Int64 := none
+  tags : Array String := #[]
+  deriving Repr, Entity
+
+structure Employee extends Person where
+  company : String
+  salary : Decimal
+  deriving Repr, Entity
+
+structure Friendship where
+  a : Role "friend" (Ref Person)
+  b : Role "friend" (Ref Person)
+  since : Std.Time.PlainDate
+  deriving Repr, Relation
+
+/-- A relation whose `endorsed` player is itself a relation. -/
+structure Endorsement where
+  endorsed : Role "endorsed" (Ref Friendship)
+  endorser : Role "endorser" (Ref Person)
+  note : Option String := none
+  deriving Repr, Relation
+
+def seed : Tx .write Unit := do
+  let ann ← Entity.insert { email := "ann@example.com", name := "Ann", age := some 34, tags := #["lean", "graphs"] : Person }
+  let bob ← Entity.insert { email := "bob@example.com", name := "Bob", company := "Acme", salary := 4200 : Employee }
+  discard &lt;| Entity.insert { email := "cy@example.com", name := "Cy" : Person }
+  let f ← Relation.insert { a := ann, b := bob.up, since := Std.Time.PlainDate.ofYearMonthDayClip 2021 3 14 : Friendship }
+  discard &lt;| Relation.insert { endorsed := f, endorser := Ref.key (α := Person) "cy@example.com", note := some "true friends" : Endorsement }
+
+structure FriendOf where
+  name : String
+  friend : String
+  deriving Repr, FromRow
+
+def report : Tx .read Unit := do
+  for r in stream (α := FriendOf) typeql!"match $f isa friendship, links (friend: $x, friend: $y);
+      $x has name $name; $y has name $friend;" do
+    IO.println s!"{r.name} ↔ {r.friend}"</code></pre>
+    <p>The full program, with its <code>main</code>, migrations and concurrent reads, is in <a href="https://github.com/Volland/typedb-lean/blob/main/examples/social/Social.lean">examples/social/Social.lean</a>.</p>
+
+    <h2 id="bank">Bank transfer with conflict retry</h2>
+    <p>Balances are exact <code>Decimal</code> values, so no money is lost to floating point. Two concurrent transfers that touch the same account conflict at commit; the retry policy re-runs the whole body, up to five more times, with exponential back-off starting at 20 ms.</p>
+    <pre><code class="lang-lean">@[typedb "account"]
+structure Account where
+  number : Key String
+  owner : String
+  balance : Decimal
+  deriving Entity
+
+def transfer (src dst : String) (amount : Decimal) : Tx .write Unit := do
+  let a := Ref.key (α := Account) src
+  let b := Ref.key (α := Account) dst
+  let some from_ ← Entity.get? a | Tx.fail (.internal s!"no account {src}")
+  let some to_ ← Entity.get? b | Tx.fail (.internal s!"no account {dst}")
+  if from_.balance &lt; amount then Tx.fail (.internal s!"{src}: insufficient funds")
+  Entity.update a Account.field.balance (from_.balance - amount)
+  Entity.update b Account.field.balance (to_.balance + amount)
+
+def run (d : Driver) : EIO TypeDBError Unit := do
+  d.ensureDatabase "bank"
+  d.runSync "bank" .schema (Schema.defineTx [TypeSpec.of Account])
+  d.runSync "bank" .write do
+    discard &lt;| Entity.insert { number := "A-1", owner := "Ann", balance := 100 : Account }
+    discard &lt;| Entity.insert { number := "B-2", owner := "Bob", balance := 20 : Account }
+  d.runSync "bank" .write (retry := .conflicts 5 (.exponential 20)) (transfer "A-1" "B-2" 30)</code></pre>
+    <p>If <code>transfer</code> fails, nothing it wrote is committed. <code>Account.field.balance</code> is a typed field handle: passing a <code>String</code> to it is a compile error.</p>
+
+    <h2 id="generic">Mode-generic helpers</h2>
+    <p>A read helper that takes its mode as a parameter runs in read, write and schema transactions alike. Here a write transaction reuses it before updating.</p>
+    <pre><code class="lang-lean">structure PersonRow where
+  name : String
+  age : Option Int64
+  deriving FromRow
+
+def findByEmail {m : TxMode} [TxMode.Allows m .read] (email : String) : Tx m (Option PersonRow) :=
+  query1? typeql!"match $p isa person, has email {email}, has name $name; try \{ $p has age $age; };"
+
+def birthday (email : String) : Tx .write Unit := do
+  let r := Ref.key (α := Person) email
+  if let some p ← Entity.get? r then
+    Entity.update r Person.field.age (p.age.map (· + 1))
+
+def greet (email : String) : Tx .write Unit := do
+  if let some p ← findByEmail email then
+    IO.println s!"hello, {p.name}"
+  birthday email</code></pre>
+    <p>The <code>email</code> is interpolated with <code>{email}</code>, so an address like <code>x"; delete …</code> is just an odd string, never a second statement.</p>
+
+    <h2 id="stream">Streaming and folds</h2>
+    <p>Neither of these holds the whole answer in memory. Rows arrive and decode a batch at a time.</p>
+    <pre><code class="lang-lean">def exportCsv (h : IO.FS.Handle) : Tx .read Nat := do
+  let mut n := 0
+  for p in stream (α := PersonRow) typeql!"match $p isa person, has name $name; try \{ $p has age $age; };" do
+    h.putStrLn s!"{p.name},{(p.age.map toString).getD ""}"
+    n := n + 1
+  return n
+
+def averageAge : Tx .read Float := do
+  let (sum, count) ← queryFold (α := Col "a" Int64) typeql!"match $p isa person, has age $a;" (0, 0)
+    fun (s, c) a => (s + a.val.toInt, c + 1)
+  return if count == 0 then 0 else Float.ofInt sum / count.toFloat</code></pre>
+
+    <h2 id="fetch">Fetch documents</h2>
+    <p>A TypeQL <code>fetch</code> returns JSON documents; <code>fetch</code> decodes them into any type with a <code>Lean.FromJson</code> instance.</p>
+    <pre><code class="lang-lean">structure PersonDoc where
+  name : String
+  email : String
+  deriving Lean.FromJson
+
+def docs : Tx .read (Array PersonDoc) :=
+  fetch typeql!"match $p isa person; fetch \{ \"name\": $p.name, \"email\": $p.email };"</code></pre>
+
+    <h2 id="poly">Polymorphic reads</h2>
+    <p>One query for every <code>person</code>, each decoded into the constructor of its own type.</p>
+    <pre><code class="lang-lean">inductive AnyPerson where
+  | person (p : Person)
+  | employee (e : Employee)
+  deriving Repr, Polymorphic
+
+def people : Tx .read Unit := do
+  for (_, p) in ← Polymorphic.all (α := AnyPerson) do
+    match p with
+    | .person p => IO.println s!"person   {p.name} &lt;{p.email}&gt;"
+    | .employee e => IO.println s!"employee {e.name} at {e.company}, salary {e.salary}"</code></pre>
+
+    <h2 id="concurrent">Concurrent transactions</h2>
+    <p>Each <code>Driver.run</code> gets its own thread; one driver multiplexes all of them over its connection.</p>
+    <pre><code class="lang-lean">def dashboard (d : Driver) : EIO TypeDBError Unit := do
+  let counts ← (Std.Async.EAsync.concurrentlyAll (#["eu", "us", "apac"].map fun db =>
+    d.run db .read (Entity.count (α := Person)))).block
+  IO.println s!"people per region: {counts}"
+
+def peopleAndPosts (d : Driver) : EIO TypeDBError Unit := do
+  let (people, posts) ← (Std.Async.EAsync.concurrently
+    (d.run "social" .read (Entity.all (α := Person)))
+    (d.run "social" .read (Entity.all (α := Post)))).block
+  IO.println s!"{people.size} people, {posts.size} posts"</code></pre>
+
+    <h2 id="migrations">Migrations with backfill</h2>
+    <p>Step 1 defines the ORM schema, step 2 adds an attribute in TypeQL, and step 3 is Lean code that backfills data. A schema transaction may also write, so step 3's change and its history record commit together or not at all.</p>
+    <pre><code class="lang-lean">def migrations : List Migration := [
+  Migration.define 1 "social schema" schema,
+  Migration.tql 2 "nicknames"
+    "define attribute nickname, value string; person owns nickname;"
+    (down := some "undefine owns nickname from person; nickname;"),
+  { version := 3, name := "default nickname", fingerprint := "nickname := name, v1"
+    up := exec typeql!"match $p isa person, has name $n; not \{ $p has nickname $k; }; insert $p has nickname == $n;"
+    down := .step (exec typeql!"match $p isa person, has nickname $k; delete has $k of $p;") }
+]
+
+def main : IO Unit := do
+  let r ← (Driver.withDriver { address := "127.0.0.1:1729" } fun d => do
+    d.ensureDatabase "social"
+    let applied ← d.migrateSync "social" migrations
+    IO.println s!"applied: {applied.steps.toList}"
+    d.runSync "social" .read (Schema.verify! schema)
+    : EIO TypeDBError Unit).toBaseIO
+  if let .error e := r then IO.eprintln e</code></pre>
+
+    <h2 id="errors">What does not compile</h2>
+    <p>These checks are part of the test suite (<code>tests/CompileChecks.lean</code>), with the compiler's exact messages pinned.</p>
+    <pre><code class="lang-lean">-- An insert in a read transaction
+example : Tx .read Unit := exec typeql!"match $p isa person; insert $p has name \"x\";"</code></pre>
+    <pre><code class="lang-text">error: failed to synthesize instance of type class
+  TxMode.read.Allows TxMode.write</code></pre>
+    <pre><code class="lang-lean">-- Interpolating a value that has no TypeQL rendering
+structure NotRenderable where
+  x : Nat
+
+example (v : NotRenderable) : Query .read := typeql!"match $p has id {v};"</code></pre>
+    <pre><code class="lang-text">error: failed to synthesize instance of type class
+  ToTypeQL NotRenderable</code></pre>
+    <p>And the other direction compiles, because weaker modes lift into stronger ones:</p>
+    <pre><code class="lang-lean">example : Tx .write (Array (Col "n" String)) := query typeql!"match $p isa person, has name $n;"
+example : Tx .schema Unit := do
+  exec typeql!"define entity person;"
+  exec typeql!"insert $p isa person;"</code></pre>
+
+    <nav class="pager">
+      <a class="prev" href="guide.html"><small>Previous</small>Guide</a>
+      <a class="next" href="benchmarks.html"><small>Next</small>Benchmarks</a>
+    </nav>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -50,3 +50,9 @@ Results are strict arrays, folds or `for` loops over a stream that cannot leave 
 `lake exe bench` runs the same workloads with this library and with the official Rust driver against one server and checks the performance targets.
 
 - part_of:: [[capabilities#performance]]
+
+## Website
+
+`site/` is the project website, published to GitHub Pages by `.github/workflows/docs.yaml` together with the API reference built in `docbuild/`.
+
+It covers the home page, a usage guide, examples, the benchmark results against the Rust driver and a mini book on TypeDB and Lean, which links to the Leanpub book *TypeDB for Edge AI Agents*. See [[decisions#Static website on GitHub Pages]].

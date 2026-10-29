@@ -8,7 +8,7 @@ typedb-lean is a Lean package, distributed as source: users `require` it from Gi
 |---|---|---|
 | `ci.yaml` | push to `main`, pull requests | build, unit and integration tests on Linux x86_64 and arm64, build and unit tests on macOS arm64, benchmark smoke on Linux x86_64 |
 | `release.yaml` | tag `v*` | checks the tag against the lakefile and changelog, runs the full tests and the benchmark, publishes the GitHub release with `bench/report.json` |
-| `docs.yaml` | push to `main`, tags | builds the API docs with doc-gen4 and publishes them with the guide to GitHub Pages |
+| `docs.yaml` | push to `main`, tags | builds the API docs with doc-gen4 and publishes them with the website (`site/`) to GitHub Pages |
 
 ## Cutting a release
 

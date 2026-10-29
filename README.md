@@ -54,6 +54,7 @@ Supported platforms are Linux x86_64, Linux arm64 and macOS arm64. Lean is pinne
 
 ## Documentation
 
+- [Website](https://volland.github.io/typedb-lean/): overview, guide, examples, benchmarks and a mini book on TypeDB and Lean. The source is in [site/](site); preview it with `python3 -m http.server -d site`.
 - [Guide](docs/guide/README.md): getting started, transactions, async, queries, decoding, the ORM, migrations and performance.
 - [Example](examples/social/Social.lean): a small social network that uses every feature. Run it with `lake exe social` (it uses `TYPEDB_ADDRESS`, default `127.0.0.1:1729`).
 - [API reference](https://volland.github.io/typedb-lean/api/TypeDB.html), built from the docstrings by doc-gen4 (locally: `cd docbuild && lake build TypeDB:docs`).

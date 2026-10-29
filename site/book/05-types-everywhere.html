@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Types everywhere · typedb-lean</title>
+  <meta name="description" content="Every layer where typedb-lean keeps a type: schema and structures, value types, query modes, transaction modes, escaping, row decoding, streams, errors and schema verification.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html">Introduction</a></li>
+      <li><a href="01-why.html">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html" aria-current="page">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#map">The map</a></li>
+      <li><a href="#values">Values</a></li>
+      <li><a href="#queries">Queries know their mode</a></li>
+      <li><a href="#modes">Transactions know their mode</a></li>
+      <li><a href="#escaping">Values cannot become syntax</a></li>
+      <li><a href="#rows">Rows have shapes</a></li>
+      <li><a href="#streams">Streams stay in their transaction</a></li>
+      <li><a href="#errors">Errors are typed</a></li>
+      <li><a href="#verify">Closing the loop: verification</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Chapter 5</div>
+    <h1>Types everywhere</h1>
+    <p class="lead">This chapter goes through typedb-lean layer by layer and shows, for each one, what the type says, who checks it, and what you see when it is wrong.</p>
+
+    <h2 id="map">The map</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Layer</th><th>Lean type</th><th>Checked</th></tr></thead>
+      <tbody>
+        <tr><td>Schema</td><td>structures with <code>deriving Entity</code> / <code>Relation</code></td><td>at start-up, by <code>Schema.verify!</code></td></tr>
+        <tr><td>Values</td><td><code>Int64</code>, <code>String</code>, <code>Decimal</code>, <code>Std.Time.PlainDate</code>, …</td><td>at compile time (writing) and per row (reading)</td></tr>
+        <tr><td>Query text</td><td><code>Query need</code></td><td>at compile time: mode inferred by <code>typeql!</code></td></tr>
+        <tr><td>Interpolated values</td><td><code>[ToTypeQL α]</code></td><td>at compile time</td></tr>
+        <tr><td>Transactions</td><td><code>Tx m α</code>, <code>[TxMode.Allows m need]</code></td><td>at compile time</td></tr>
+        <tr><td>Rows and documents</td><td><code>FromRow α</code>, <code>RowDecoder α</code>, <code>FromJson α</code></td><td>per row, as a typed error</td></tr>
+        <tr><td>References</td><td><code>Ref α</code></td><td>at compile time</td></tr>
+        <tr><td>Failures</td><td><code>TypeDBError</code></td><td>exhaustive <code>match</code></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="values">Values</h2>
+    <p>Each TypeDB value type has one Lean type that holds it exactly:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>TypeDB</th><th>Lean</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>integer</code></td><td><code>Int64</code></td><td>also <code>Int</code>, and <code>Nat</code> with a range check</td></tr>
+        <tr><td><code>double</code></td><td><code>Float</code></td><td>written as the exact decimal expansion of the double</td></tr>
+        <tr><td><code>boolean</code></td><td><code>Bool</code></td><td></td></tr>
+        <tr><td><code>string</code></td><td><code>String</code></td><td></td></tr>
+        <tr><td><code>decimal</code></td><td><code>TypeDB.Decimal</code></td><td>exact, 19 fractional digits, never through a float</td></tr>
+        <tr><td><code>date</code></td><td><code>Std.Time.PlainDate</code></td><td></td></tr>
+        <tr><td><code>datetime</code></td><td><code>Std.Time.PlainDateTime</code></td><td></td></tr>
+        <tr><td><code>datetime-tz</code></td><td><code>TypeDB.DatetimeTZ</code></td><td>instant, offset and IANA zone; or <code>Std.Time.DateTime</code></td></tr>
+        <tr><td><code>duration</code></td><td><code>TypeDB.Duration</code></td><td>months, days and nanoseconds kept apart, as TypeDB does</td></tr>
+      </tbody>
+    </table></div>
+    <p>The same table drives the schema generator: a <code>salary : Decimal</code> field becomes <code>attribute salary, value decimal</code>. A <code>duration</code> of one month is not 30 days, and a decimal of <code>0.1</code> is not <code>0.1000000000000000055…</code>. Keeping each in its own Lean type keeps those distinctions intact.</p>
+
+    <h2 id="queries">Queries know their mode</h2>
+    <p>A <code>Query need</code> is TypeQL text together with the weakest transaction mode that may run it. <code>typeql!</code> computes <code>need</code> at compile time from the literal, ignoring string literals and variable names:</p>
+    <pre><code class="lang-lean">#check typeql!"insert $p isa person;"
+-- Query TxMode.write
+#check typeql!"match $p isa person, has name \"insert\";"
+-- Query TxMode.read
+#check typeql!"define entity person;"
+-- Query TxMode.schema</code></pre>
+    <p><code>define</code>, <code>undefine</code> and <code>redefine</code> need a schema transaction. <code>insert</code>, <code>delete</code>, <code>update</code> and <code>put</code> need a write transaction. Anything else is read. For text you build at run time, you state the mode yourself with <code>Query.raw .write text</code>. Joining two queries with <code>Query.append</code> gives a <code>Query (max m n)</code>, the stronger of the two modes.</p>
+
+    <h2 id="modes">Transactions know their mode</h2>
+    <p>A transaction body is a <code>Tx m α</code>, and every operation that runs a query asks for evidence that <code>m</code> is strong enough:</p>
+    <pre><code class="lang-lean">def exec [TxMode.Allows m need] (q : Query need) : Tx m Unit
+def query [TxMode.Allows m need] [FromRow α] (q : Query need) : Tx m (Array α)</code></pre>
+    <p>The evidence comes from four instances, one for each allowed pair in <code>read ≤ write ≤ schema</code>:</p>
+    <pre><code class="lang-lean">class Allows (cur need : TxMode) : Prop where
+  le : need ≤ cur
+
+instance {m : TxMode} : Allows m .read := ⟨Nat.zero_le _⟩
+instance : Allows .write .write := ⟨Nat.le_refl _⟩
+instance : Allows .schema .write := ⟨by decide⟩
+instance : Allows .schema .schema := ⟨Nat.le_refl _⟩</code></pre>
+    <p>So an insert in a read transaction does not compile. This is the exact message, which the library's test suite pins:</p>
+    <pre><code class="lang-lean">example : Tx .read Unit := exec typeql!"match $p isa person; insert $p has name \"x\";"</code></pre>
+    <pre><code class="lang-text">error: failed to synthesize instance of type class
+  TxMode.read.Allows TxMode.write</code></pre>
+    <p>The other direction is allowed. A schema transaction may write data, and a <code>Tx .read</code> helper can be used inside a write body, because <code>Tx .read</code> lifts into <code>Tx .write</code> and <code>Tx .schema</code> automatically:</p>
+    <pre><code class="lang-lean">def readHelper : Tx .read Nat := pure 1
+example : Tx .write Nat := do return (← readHelper) + 1</code></pre>
+    <p>To write a helper that works in <em>any</em> mode strong enough, make the mode a parameter and require the evidence:</p>
+    <pre><code class="lang-lean">def countPeople {m : TxMode} [TxMode.Allows m .read] : Tx m Nat := do
+  let n ← queryOne (α := Col "c" Int64) typeql!"match $p isa person; reduce $c = count;"
+  return n.val.toInt.toNat</code></pre>
+    <p><code>Tx</code> is an irreducible definition rather than an abbreviation, so Lean cannot unfold <code>Tx .read α</code> and <code>Tx .write α</code> to the same thing and confuse them. The mode costs nothing at run time: <code>Allows</code> is a <code>Prop</code>, and proofs are erased by the compiler.</p>
+
+    <h2 id="escaping">Values cannot become syntax</h2>
+    <p>Each <code>{e}</code> in <code>typeql!</code> is rendered by the <code>ToTypeQL</code> instance of its type. A <code>String</code> is quoted with every quote, backslash and control character escaped:</p>
+    <pre><code class="lang-lean">let name := "Ann \"the\" coder"
+typeql!"match $p isa person, has name {name}, has age {(42 : Int64)};"
+-- match $p isa person, has name "Ann \"the\" coder", has age 42;</code></pre>
+    <p>Whatever a user types ends up as one string literal, so it cannot change the query's structure. A value whose type has no instance does not compile:</p>
+    <pre><code class="lang-lean">structure NotRenderable where
+  x : Nat
+
+example (v : NotRenderable) : Query .read := typeql!"match $p has id {v};"</code></pre>
+    <pre><code class="lang-text">error: failed to synthesize instance of type class
+  ToTypeQL NotRenderable</code></pre>
+    <p>When you do need to splice text verbatim, such as a type label chosen at run time, you say so with <code>Raw</code>. The unsafe operation is then visible in the code:</p>
+    <pre><code class="lang-lean">def byLabel (label : String) : Query .read :=
+  typeql!"match $x isa {Raw.mk label};"</code></pre>
+
+    <h2 id="rows">Rows have shapes</h2>
+    <p>A decoder reads named columns of an answer row. <code>deriving FromRow</code> builds one from a structure: each field reads the variable of the same name, and <code>Option</code> fields read columns that a <code>try</code> block may leave empty:</p>
+    <pre><code class="lang-lean">structure PersonRow where
+  name : String
+  age : Option Int64
+  deriving FromRow
+
+let people ← query (α := PersonRow)
+  typeql!"match $p isa person, has name $name; try \{ $p has age $age; };"</code></pre>
+    <p><code>Col "v" T</code> decodes a single column, and pairs decode side by side: <code>query (α := Col "n" String × Col "a" Int64) q</code>. If the data does not have the declared shape, the error names the column and both types:</p>
+    <pre><code class="lang-lean">query (α := Col "t" Int64) typeql!"match $b isa book, has title $t;"</code></pre>
+    <pre><code class="lang-text">TypeDBError.decode "t" "integer" "string value"</code></pre>
+    <p>It is a value you can match on, raised before your code sees a wrong value.</p>
+
+    <h2 id="streams">Streams stay in their transaction</h2>
+    <p><code>stream q</code> lets a <code>for</code> loop read rows one batch at a time, in constant memory. Its rows can only be pulled while the transaction is open, because the <code>ForIn</code> instance that makes <code>for</code> work exists only in <code>Tx m</code>:</p>
+    <pre><code class="lang-lean">instance [TxMode.Allows m need] : ForIn (Tx m) (RowStream need α) α</code></pre>
+    <p>You cannot iterate a stream from <code>IO</code> after the transaction has closed, so there is no stale cursor to read from. The stream is released when the loop finishes, breaks or throws.</p>
+
+    <h2 id="errors">Errors are typed</h2>
+    <p>Everything returns <code>EIO TypeDBError α</code>, and <code>TypeDBError</code> has one constructor per kind of failure:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Constructor</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>connection code msg</code></td><td>unreachable server, bad credentials, TLS problems</td></tr>
+        <tr><td><code>server code msg</code></td><td>the server rejected a request; <code>code</code> is TypeDB's code</td></tr>
+        <tr><td><code>conflict msg</code></td><td>the commit lost against a concurrent transaction; retrying may succeed</td></tr>
+        <tr><td><code>decode column expected got</code></td><td>a column or document had the wrong shape</td></tr>
+        <tr><td><code>schemaMismatch issues</code></td><td><code>Schema.verify!</code> found differences</td></tr>
+        <tr><td><code>migration version msg</code></td><td>a migration step failed or was rejected</td></tr>
+        <tr><td><code>io msg</code> / <code>internal msg</code></td><td>an <code>IO</code> error in a body / a misuse of the library</td></tr>
+      </tbody>
+    </table></div>
+    <p>Inside a body you can catch some kinds and rethrow the rest:</p>
+    <pre><code class="lang-lean">try
+  discard &lt;| query (α := Col "n" Int64) typeql!"match $p has name $n;"
+catch
+  | .decode col expected got => IO.println s!"{col}: expected {expected}, got {got}"
+  | e => throw e</code></pre>
+
+    <h2 id="verify">Closing the loop: verification</h2>
+    <p>The one thing the compiler cannot see is the live database. <code>Schema.verify</code> reads the server's schema and compares it with your mappings. It returns a list of <code>SchemaIssue</code>s: missing types, wrong kinds, wrong supertypes, attributes that are not owned or have another value type, and missing <code>relates</code> and <code>plays</code>. <code>Schema.verify!</code> fails with <code>TypeDBError.schemaMismatch</code> if the list is not empty:</p>
+    <pre><code class="lang-lean">let issues ← d.runSync db .read (Schema.verify schema)   -- List SchemaIssue
+d.runSync db .read (Schema.verify! schema)               -- or fail at start-up</code></pre>
+    <p>Run it once when your program starts. From then on, the structures you compiled against describe the database you are talking to. If someone changes the schema underneath you, you get a list such as <code>attribute 'year' has value type string, expected integer</code> at start-up rather than a decode error in the middle of a request.</p>
+
+    <div class="callout book">
+      <strong>To learn more</strong>
+      <p>Why typed schemas and typed queries matter for knowledge that machines reason over is covered in <a href="https://leanpub.com/typedbforedgeaiagents"><em>TypeDB for Edge AI Agents</em></a>. The logic behind types as evidence is the subject of <a href="https://leanpub.com/dependenttypesdttlogicholforaiagentreadyknowledgegraphs"><em>Dependent Types (DTT) &amp; Logic for AI Agent Ready Knowledge Graphs</em></a>.</p>
+    </div>
+
+    <nav class="pager"><a class="prev" href="04-modeling.html"><small>Previous</small>4. Modeling a domain</a><a class="next" href="06-queries-and-transactions.html"><small>Next</small>6. Queries and transactions</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

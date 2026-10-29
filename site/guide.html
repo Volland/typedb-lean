@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guide · typedb-lean</title>
+  <meta name="description" content="How to use typedb-lean: install, connect, transactions, typed queries, decoding, the ORM, migrations and async.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-root="." data-page="guide">
+
+<div class="container doc">
+  <aside>
+    <h4>Guide</h4>
+    <ul>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#server">Run a server</a></li>
+      <li><a href="#connect">Connect and query</a></li>
+      <li><a href="#transactions">Transactions</a></li>
+      <li><a href="#errors">Errors and retries</a></li>
+      <li><a href="#queries">Typed queries</a></li>
+      <li><a href="#decoding">Decoding results</a></li>
+      <li><a href="#values">Value types</a></li>
+      <li><a href="#orm">The ORM</a></li>
+      <li><a href="#schema">Schema</a></li>
+      <li><a href="#migrations">Migrations</a></li>
+      <li><a href="#async">Async</a></li>
+      <li><a href="#testing">Testing</a></li>
+    </ul>
+    <h4>More</h4>
+    <ul>
+      <li><a href="examples.html">Examples</a></li>
+      <li><a href="book/index.html">The mini book</a></li>
+      <li><a href="api/TypeDB.html">API reference</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Guide</div>
+    <h1>Using typedb-lean</h1>
+    <p class="lead">Everything you need to talk to TypeDB from Lean: from adding the package to typed queries, the ORM and migrations. For the ideas behind it, read <a href="book/index.html">the mini book</a>.</p>
+
+    <h2 id="install">Install</h2>
+    <p>Add the package to your <code>lakefile.lean</code>:</p>
+    <pre><code class="lang-lean">require «typedb-lean» from git "https://github.com/Volland/typedb-lean" @ "v0.1.0"</code></pre>
+    <p>The first <code>lake build</code> clones <code>typedb-driver</code> at the version in <code>TYPEDB_VERSION</code> (3.14.0) and builds its C library with cargo, so you need a Rust toolchain and <code>protoc</code>, the protobuf compiler (<code>apt-get install protobuf-compiler</code> or <code>brew install protobuf</code>). That takes about a minute; later builds reuse it. To link a library you built yourself, set <code>TYPEDB_DRIVER_LIB=/path/to/libtypedb_driver_clib.a</code>.</p>
+    <p>Supported platforms: Linux x86_64, Linux arm64 and macOS arm64. Lean is pinned to <code>v4.35.0</code>.</p>
+
+    <h2 id="server">Run a server</h2>
+    <pre><code class="lang-sh">docker run -d --name typedb -p 1729:1729 typedb/typedb:3.14.0</code></pre>
+    <p>The default credentials are <code>admin</code> / <code>password</code>.</p>
+
+    <h2 id="connect">Connect and query</h2>
+    <pre><code class="lang-lean">import TypeDB
+open TypeDB
+
+def main : IO Unit := do
+  let r ← (Driver.withDriver { address := "127.0.0.1:1729" } fun d => do
+    d.ensureDatabase "hello"
+    d.runSync "hello" .schema (exec typeql!"define attribute name, value string; entity person, owns name;")
+    d.runSync "hello" .write (exec typeql!"insert $p isa person, has name {"Ann"};")
+    let names ← d.runSync "hello" .read (query (α := Col "n" String) typeql!"match $p isa person, has name $n;")
+    IO.println (names.map (·.val))
+    : EIO TypeDBError Unit).toBaseIO
+  if let .error e := r then IO.eprintln e</code></pre>
+    <p><code>Config</code> also takes <code>username</code>, <code>password</code>, <code>tls</code> (<code>.disabled</code>, <code>.system</code> or <code>.rootCA path</code>) and <code>requestTimeoutMs</code>. Everything returns <code>EIO TypeDBError α</code>; inside <code>IO</code>, use <code>.toBaseIO</code> and match on the result.</p>
+    <p>Database management: <code>createDatabase</code> (fails if it exists), <code>ensureDatabase</code>, <code>databaseExists</code>, <code>deleteDatabase</code>, <code>databases</code>, and <code>schema</code> / <code>typeSchema</code> for the schema as TypeQL text.</p>
+
+    <h2 id="transactions">Transactions</h2>
+    <p>A transaction body has type <code>Tx m α</code>, where <code>m</code> is <code>.read</code>, <code>.write</code> or <code>.schema</code>. The modes are ordered <code>read ≤ write ≤ schema</code>: a schema transaction may also write data, and a write transaction may read.</p>
+    <p>Every query carries the weakest mode that may run it, and every operation requires <code>[TxMode.Allows m need]</code>. So this does not compile:</p>
+    <pre><code class="lang-lean">def broken : Tx .read Unit :=
+  exec typeql!"match $p isa person; insert $p has name \"x\";"
+-- failed to synthesize instance of type class TxMode.read.Allows TxMode.write</code></pre>
+    <p>Helpers of a weaker mode lift into stronger bodies automatically. To write helpers that work in any sufficient mode, take the mode as a parameter:</p>
+    <pre><code class="lang-lean">def countPeople {m : TxMode} [TxMode.Allows m .read] : Tx m Nat := do
+  let n ← queryOne (α := Col "c" Int64) typeql!"match $p isa person; reduce $c = count;"
+  return n.val.toInt.toNat</code></pre>
+    <p>Run a body with:</p>
+    <pre><code class="lang-lean">d.runSync "db" .write body          -- EIO TypeDBError α, on this thread
+d.run "db" .write body              -- EAsync TypeDBError α, on its own thread
+d.runSync "db" .read (opts := { timeoutMs := 10000, prefetch := 1024 }) body</code></pre>
+    <p>If the body succeeds, the transaction commits (write and schema) or closes (read). If it fails, it closes without committing and the error is returned. Bodies are ordinary <code>do</code> blocks: they can call <code>IO</code> (an <code>IO</code> error becomes <code>TypeDBError.io</code>), raise errors with <code>Tx.fail</code>, and catch them with <code>try … catch</code>.</p>
+
+    <h2 id="errors">Errors and retries</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Constructor</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>connection code msg</code></td><td>unreachable server, bad credentials, TLS problems</td></tr>
+        <tr><td><code>server code msg</code></td><td>the server rejected a request; <code>code</code> is TypeDB's code, e.g. <code>TQL03</code></td></tr>
+        <tr><td><code>conflict msg</code></td><td>the commit lost against a concurrent transaction</td></tr>
+        <tr><td><code>decode column expected got</code></td><td>a column or document did not have the expected shape</td></tr>
+        <tr><td><code>schemaMismatch issues</code></td><td><code>Schema.verify!</code> found differences</td></tr>
+        <tr><td><code>migration version msg</code></td><td>a migration step failed or was rejected</td></tr>
+        <tr><td><code>io msg</code> / <code>internal msg</code></td><td>an <code>IO</code> error in a body / a misuse of the library</td></tr>
+      </tbody>
+    </table></div>
+    <pre><code class="lang-lean">d.runSync "db" .write do
+  exec typeql!"insert $p isa person, has name \"a\";"
+  try
+    discard &lt;| query (α := Col "n" Int64) typeql!"match $p has name $n;"
+  catch
+    | .decode col expected got => IO.println s!"{col}: expected {expected}, got {got}"
+    | e => throw e</code></pre>
+    <p>TypeDB detects conflicting writes at commit. A retry policy re-runs the whole body when, and only when, the commit loses a conflict. The body below runs at most 6 times; other errors return at once.</p>
+    <pre><code class="lang-lean">d.runSync "db" .write (retry := .conflicts 5 (.exponential 20)) transfer</code></pre>
+
+    <h2 id="queries">Typed queries</h2>
+    <p><code>typeql!</code> builds a <code>Query m</code>. Every <code>{e}</code> is rendered by the <code>ToTypeQL</code> class as a TypeQL value literal, quoted and escaped, so a value can never change a query's structure. A value whose type has no <code>ToTypeQL</code> instance is a compile error.</p>
+    <pre><code class="lang-lean">let name := "Ann \"the\" coder"
+let q := typeql!"match $p isa person, has name {name}, has age {(42 : Int64)};"
+-- match $p isa person, has name "Ann \"the\" coder", has age 42;</code></pre>
+    <p>To splice text verbatim, such as a type label, wrap it in <code>Raw</code>. TypeQL braces are written <code>\{</code> and <code>\}</code>, because <code>{…}</code> is interpolation:</p>
+    <pre><code class="lang-lean">let label := Raw.mk "person"
+typeql!"match $x isa {label};"
+typeql!"match $p isa person, has name $n; fetch \{ \"name\": $n };"</code></pre>
+    <p>The mode is read off the query text, ignoring string literals and variables: <code>define</code>, <code>undefine</code> or <code>redefine</code> need a schema transaction; <code>insert</code>, <code>delete</code>, <code>update</code> or <code>put</code> a write transaction; anything else a read transaction. Text built at run time takes an explicit mode: <code>Query.raw .write text</code>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Function</th><th>Answer</th></tr></thead>
+      <tbody>
+        <tr><td><code>exec q</code></td><td>runs for the effect, draining any rows</td></tr>
+        <tr><td><code>query (α := T) q</code></td><td>every row as an <code>Array T</code></td></tr>
+        <tr><td><code>query1? q</code> / <code>queryOne q</code></td><td>the first row, optional / required</td></tr>
+        <tr><td><code>queryFold q init f</code>, <code>queryFoldM</code></td><td>a fold over the rows, in constant memory</td></tr>
+        <tr><td><code>for x in stream (α := T) q do …</code></td><td>a loop over the rows, in constant memory</td></tr>
+        <tr><td><code>fetch (α := T) q</code> / <code>fetchJson q</code></td><td>the documents of a <code>fetch</code> query</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="decoding">Decoding results</h2>
+    <p>Derive a decoder for a structure: each field reads the query variable of the same name, and <code>Option</code> fields read optional columns (from a <code>try</code> block).</p>
+    <pre><code class="lang-lean">structure PersonRow where
+  name : String
+  age : Option Int64
+  deriving FromRow
+
+let people ← query (α := PersonRow)
+  typeql!"match $p isa person, has name $name; try \{ $p has age $age; };"</code></pre>
+    <p>Or build one by hand from <code>col</code> and <code>colOpt</code>, applicatively:</p>
+    <pre><code class="lang-lean">let d : RowDecoder (String × Option Int64) := Prod.mk &lt;$&gt; col "name" &lt;*&gt; colOpt "age"
+let rows ← queryWith d typeql!"match $p isa person, has name $name; try \{ $p has age $age; };"</code></pre>
+    <p><code>Col "v" T</code> decodes a single column, and pairs decode side by side: <code>query (α := Col "n" String × Col "a" Int64) q</code>. For large answers, fold or stream; rows are decoded a batch at a time:</p>
+    <pre><code class="lang-lean">let total ← queryFold (α := Col "a" Int64) typeql!"match $p has age $a;" 0 fun s a => s + a.val.toInt
+for p in stream (α := PersonRow) typeql!"match $p isa person, has name $name;" do
+  if p.name == "Ann" then break</code></pre>
+    <p>A stream belongs to its transaction: it is released when the loop ends, breaks or throws, and it cannot be returned out of the body. <code>fetch</code> decodes JSON documents with <code>Lean.FromJson</code>.</p>
+
+    <h2 id="values">Value types</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>TypeDB</th><th>Lean</th></tr></thead>
+      <tbody>
+        <tr><td><code>integer</code></td><td><code>Int64</code> (also <code>Int</code>, and <code>Nat</code> with a range check)</td></tr>
+        <tr><td><code>double</code></td><td><code>Float</code></td></tr>
+        <tr><td><code>boolean</code></td><td><code>Bool</code></td></tr>
+        <tr><td><code>string</code></td><td><code>String</code></td></tr>
+        <tr><td><code>decimal</code></td><td><code>TypeDB.Decimal</code>, exact, 19 fractional digits</td></tr>
+        <tr><td><code>date</code></td><td><code>Std.Time.PlainDate</code></td></tr>
+        <tr><td><code>datetime</code></td><td><code>Std.Time.PlainDateTime</code></td></tr>
+        <tr><td><code>datetime-tz</code></td><td><code>TypeDB.DatetimeTZ</code> or <code>Std.Time.DateTime</code></td></tr>
+        <tr><td><code>duration</code></td><td><code>TypeDB.Duration</code>: months, days and nanoseconds kept apart</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>IID</code>, <code>Label</code> (a concept's type label) and <code>Concept</code> decode from instance columns.</p>
+
+    <h2 id="orm">The ORM</h2>
+    <p>Map structures to TypeDB types. <code>Key</code>, <code>Role</code> and <code>Attr</code> are transparent markers in field types: a <code>Key String</code> is a <code>String</code>.</p>
+    <pre><code class="lang-lean">@[typedb "person"]                     -- the type label; default: the name in kebab-case
+structure Person where
+  email : Key String                   -- owns email @key
+  name : String                        -- owns name @card(1..1)
+  age : Option Int64 := none           -- owns age
+  tags : Array String := #[]           -- owns tags @card(0..)
+  nick : Attr "nickname" (Option String) := none   -- attribute label override
+  deriving Entity
+
+structure Employee extends Person where   -- employee sub person
+  company : String
+  deriving Entity
+
+structure Friendship where
+  a : Role "friend" (Ref Person)       -- relates friend; person plays friendship:friend
+  b : Role "friend" (Ref Person)
+  since : Int64
+  deriving Relation</code></pre>
+    <p><code>Ref α</code> points at an instance by key (<code>Ref.key (α := Person) "ann@example.com"</code>) or by IID; <code>r.up</code> views a subtype reference as its supertype.</p>
+    <pre><code class="lang-lean">let ann ← Entity.insert ({ email := "ann@x", name := "Ann" } : Person)  -- Ref Person
+let p? ← Entity.get? ann                                  -- Option Person
+let all ← Entity.all (α := Person)                        -- includes subtype instances
+Entity.update ann Person.field.name "Annie"                -- typed field handles
+Entity.update ann Person.field.age none                    -- removes the attribute
+Entity.delete ann
+let n ← Entity.count (α := Person)</code></pre>
+    <p><code>Relation.insert</code>, <code>Relation.get?</code> and the rest work the same way. Reads fetch all attributes and role players in two queries, however many instances there are. For polymorphic reads, derive <code>Polymorphic</code> on an inductive whose constructors wrap the subtypes:</p>
+    <pre><code class="lang-lean">inductive AnyPerson where
+  | person (p : Person)
+  | employee (e : Employee)
+  deriving Polymorphic
+
+for (iid, p) in ← Polymorphic.all (α := AnyPerson) do
+  match p with
+  | .person p => IO.println p.name
+  | .employee e => IO.println s!"{e.name} at {e.company}"</code></pre>
+
+    <h2 id="schema">Schema</h2>
+    <pre><code class="lang-lean">def schema := [TypeSpec.of Person, TypeSpec.of Employee, TypeSpec.of Friendship]
+
+Schema.defineText schema                                  -- the TypeQL define, as text
+d.runSync db .schema (Schema.defineTx schema)             -- define it
+let issues ← d.runSync db .read (Schema.verify schema)    -- List SchemaIssue
+d.runSync db .read (Schema.verify! schema)                -- fails with schemaMismatch</code></pre>
+    <p><code>verify</code> reports missing types, wrong kinds, wrong supertypes, attributes that are not owned or have another value type, and missing <code>relates</code> and <code>plays</code>. Run it at start-up and your Lean types and the live database cannot drift apart silently.</p>
+
+    <h2 id="migrations">Migrations</h2>
+    <pre><code class="lang-lean">def migrations : List Migration := [
+  Migration.define 1 "schema" schema,
+  Migration.tql 2 "nicknames"
+    "define attribute nickname, value string; person owns nickname;"
+    (down := some "undefine owns nickname from person; nickname;"),
+  { version := 3, name := "backfill nicknames", fingerprint := "nickname := name, v1"
+    up := exec typeql!"match $p isa person, has name $n; not \{ $p has nickname $k; }; insert $p has nickname == $n;"
+    down := .step (exec typeql!"match $p isa person, has nickname $k; delete has $k of $p;") }
+]
+
+let report ← d.migrateSync "social" migrations
+let report ← d.rollbackSync "social" migrations (to := 1)
+let history ← Migrations.history d "social"</code></pre>
+    <ul>
+      <li>Versions are unique and increasing; <code>migrate</code> applies every step newer than the latest applied one.</li>
+      <li>Each step runs in its own schema transaction together with its history record. If it fails, nothing of it is committed and the error names its version.</li>
+      <li>Every step has a checksum of its name and <code>fingerprint</code>. If an applied step's checksum changed, <code>migrate</code> stops before running anything. Steps written as Lean code must give a <code>fingerprint</code> that changes when the code does.</li>
+      <li><code>rollback</code> runs <code>down</code> steps newest first; <code>.irreversible</code> stops it.</li>
+    </ul>
+
+    <h2 id="async">Async</h2>
+    <p><code>Driver.run</code> returns a <code>Std.Async.EAsync TypeDBError α</code> on a dedicated thread. Combine runs with the standard combinators:</p>
+    <pre><code class="lang-lean">open Std.Async
+
+def report (d : Driver) : EAsync TypeDBError (Array (Ref Person × Person) × Nat) :=
+  EAsync.concurrently
+    (d.run "social" .read (Entity.all (α := Person)))
+    (d.run "social" .read (Entity.count (α := Post)))
+
+let (people, posts) ← (report d).block</code></pre>
+    <p><code>EAsync.concurrentlyAll</code> runs an array of transactions at once, and <code>EAsync.race</code> returns the first result. One driver can be shared by any number of concurrent transactions.</p>
+
+    <h2 id="testing">Testing</h2>
+    <pre><code class="lang-sh">lake test             # unit tests, then integration tests in a typedb/typedb container
+lake test -- --unit   # unit tests only, no Docker needed
+lake test -- orm:     # only the tests whose names contain "orm:"
+TYPEDB_ADDRESS=127.0.0.1:1729 lake test   # use a server you already run</code></pre>
+
+    <nav class="pager">
+      <a class="prev" href="index.html"><small>Back</small>Home</a>
+      <a class="next" href="examples.html"><small>Next</small>Examples</a>
+    </nav>
+  </main>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

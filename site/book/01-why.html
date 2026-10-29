@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Why TypeDB and Lean · typedb-lean</title>
+  <meta name="description" content="Where types get lost between a program and its database, what TypeDB and Lean each type, and what connecting the two gives you.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html">Introduction</a></li>
+      <li><a href="01-why.html" aria-current="page">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#boundary">Types die at the boundary</a></li>
+      <li><a href="#typedb">What TypeDB types</a></li>
+      <li><a href="#lean">What Lean types</a></li>
+      <li><a href="#together">Connecting the two</a></li>
+      <li><a href="#limits">What is still checked at run time</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Chapter 1</div>
+    <h1>Why TypeDB and Lean</h1>
+    <p class="lead">Both systems have strong type systems. A typical database client throws both away at the point where they meet. This chapter shows what gets lost there, and what you get by keeping it.</p>
+
+    <h2 id="boundary">Types die at the boundary</h2>
+    <p>Consider a typical database call in almost any language:</p>
+    <pre><code class="lang-text">rows = db.query("match $p isa person, has name $n; " + "has age " + age_input + ";")
+for row in rows:
+    print(row["n"].as_string())</code></pre>
+    <p>Each line hides a failure that only shows up at run time:</p>
+    <ul>
+      <li>The query is a string. If <code>age_input</code> comes from a user, it can change the query's structure. That is query injection.</li>
+      <li>Nothing says whether this code runs in a read or a write transaction. If someone later adds an <code>insert</code> to the string, the call fails in production with a server error.</li>
+      <li>The result is a map from names to dynamically typed values. A misspelled column name, or an attribute that turned from <code>string</code> into <code>integer</code> in the last migration, fails on the first row that hits it.</li>
+      <li>The program's idea of what a <code>person</code> is lives in one place, and the database's lives in another. Nothing checks that they agree.</li>
+    </ul>
+    <p>The database knows the schema precisely, and the program's language may have a good type checker. Between them is a string going one way and a bag of values coming back. Every guarantee either side could give is lost at that boundary.</p>
+
+    <h2 id="typedb">What TypeDB types</h2>
+    <p>TypeDB is a database whose schema is a type system. You declare <em>entity types</em> (things that exist on their own), <em>relation types</em> (things that exist because they connect others through named <em>roles</em>), and <em>attribute types</em> (values with a value type, such as <code>string</code> or <code>datetime</code>). Types form hierarchies with <code>sub</code>, so an <code>employee</code> is a <code>person</code> and every query about people also finds employees.</p>
+    <p>The schema is enforced. The server rejects an insert that gives a <code>person</code> an attribute it does not own, puts a <code>book</code> into a role it cannot play, or breaks a key or cardinality constraint. TypeQL queries are type-checked against the schema before they run: the server infers the possible types of every variable in a pattern and reports a pattern that can never match.</p>
+    <p>So the data is typed. What the database cannot see is the program that sends it queries.</p>
+
+    <h2 id="lean">What Lean types</h2>
+    <p>Lean 4 is a functional programming language and a proof assistant. As a programming language it has the usual tools: structures, algebraic data types, pattern matching, type classes, monads with <code>do</code> notation. It compiles to C and runs fast.</p>
+    <p>It also has <em>dependent types</em>: a type can mention a value. That lets the type of a transaction say what kind of transaction it is (<code>Tx .read α</code> or <code>Tx .write α</code>). It lets a query's type carry the weakest transaction that may run it (<code>Query .write</code>), and it lets an operation require evidence that the current transaction is strong enough. The compiler checks all of this, and none of it costs anything at run time.</p>
+    <p>Lean also has a macro system powerful enough to read a query literal at compile time, and <code>deriving</code> handlers that generate code from a structure's definition. typedb-lean uses both.</p>
+
+    <h2 id="together">Connecting the two</h2>
+    <p>typedb-lean keeps types on both sides of the boundary and connects them. Here is the earlier example again:</p>
+    <pre><code class="lang-lean">structure PersonRow where
+  n : String
+  deriving FromRow
+
+def adults (age : Int64) : Tx .read (Array PersonRow) :=
+  query typeql!"match $p isa person, has name $n, has age $a; $a >= {age};"</code></pre>
+    <ul>
+      <li><code>{age}</code> is rendered through the <code>ToTypeQL</code> class as an integer literal. No value can change the query's structure, and a value with no TypeQL form is a compile error.</li>
+      <li><code>typeql!</code> reads the literal and gives it the type <code>Query .read</code>. If the text contained <code>insert</code>, the type would be <code>Query .write</code>, and <code>adults</code> would not compile, because its body is a read transaction.</li>
+      <li>Rows are decoded into <code>PersonRow</code>. A missing column or a value of the wrong type becomes a typed <code>decode</code> error that names the column, not a crash on a dynamic cast.</li>
+    </ul>
+    <p>On top of this, the ORM layer makes a Lean structure the single source of truth for a TypeDB type. <code>deriving Entity</code> generates the TypeQL schema, the insert and read queries, and the decoder. <code>Schema.verify!</code> compares the structures with the live schema when the program starts, so any drift between code and database is reported then, as one typed error.</p>
+
+    <div class="layers">
+      <div class="layer"><b>Schema</b><span>Lean structures generate TypeQL <code>define</code>s and are verified against the server.</span></div>
+      <div class="layer"><b>Values</b><span>Every TypeDB value type has an exact Lean type: <code>Decimal</code>, <code>Std.Time</code> dates, <code>Duration</code>.</span></div>
+      <div class="layer"><b>Queries</b><span><code>Query m</code> carries the weakest mode that may run it; values are escaped by type.</span></div>
+      <div class="layer"><b>Transactions</b><span><code>Tx m α</code> is indexed by its mode; a write in a read transaction does not compile.</span></div>
+      <div class="layer"><b>Results</b><span>Rows and documents decode into structures; failures are typed <code>TypeDBError</code> values.</span></div>
+    </div>
+
+    <h2 id="limits">What is still checked at run time</h2>
+    <p>Lean cannot see the database while it compiles your program, so some checks remain at run time:</p>
+    <ul>
+      <li>Whether a TypeQL pattern is valid for the live schema. The server checks this, and the error comes back as <code>TypeDBError.server</code> with TypeDB's error code.</li>
+      <li>Whether a column you decode actually holds the type you asked for. The decoder checks this on every row and fails with <code>TypeDBError.decode</code>.</li>
+      <li>Whether the live schema matches your structures. <code>Schema.verify!</code> checks this once, at start-up, and lists every difference.</li>
+    </ul>
+    <p>The library is designed so that each of these happens once, early, and as a typed error you can match on, rather than in the middle of a request.</p>
+
+    <div class="callout book">
+      <strong>To learn more</strong>
+      <p>The case for typed knowledge graphs, especially as memory for AI agents running at the edge, is made at length in <a href="https://leanpub.com/typedbforedgeaiagents"><em>TypeDB for Edge AI Agents</em></a> on Leanpub.</p>
+    </div>
+
+    <nav class="pager"><a class="prev" href="index.html"><small>Previous</small>Introduction</a><a class="next" href="02-typedb-basics.html"><small>Next</small>2. TypeDB basics</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

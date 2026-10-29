@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modeling a domain · typedb-lean</title>
+  <meta name="description" content="Modeling a small publishing domain in TypeDB and Lean: from nouns and verbs to types, Key, Role and Attr markers, cardinality, subtypes, relations in roles and polymorphic reads.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-root=".." data-page="book">
+<div class="container doc">
+  <aside>
+    <h4>The mini book</h4>
+    <ol>
+      <li><a href="index.html">Introduction</a></li>
+      <li><a href="01-why.html">1. Why TypeDB and Lean</a></li>
+      <li><a href="02-typedb-basics.html">2. TypeDB basics</a></li>
+      <li><a href="03-lean-basics.html">3. Just enough Lean</a></li>
+      <li><a href="04-modeling.html" aria-current="page">4. Modeling a domain</a></li>
+      <li><a href="05-types-everywhere.html">5. Types everywhere</a></li>
+      <li><a href="06-queries-and-transactions.html">6. Queries and transactions</a></li>
+      <li><a href="07-building-an-app.html">7. Building an app</a></li>
+    </ol>
+    <h4>On this page</h4>
+    <ul>
+      <li><a href="#words">From words to types</a></li>
+      <li><a href="#entities">Entities as structures</a></li>
+      <li><a href="#subtypes">Subtypes</a></li>
+      <li><a href="#relations">Relations and roles</a></li>
+      <li><a href="#reification">Relations in roles</a></li>
+      <li><a href="#schema">The generated schema</a></li>
+      <li><a href="#using">Using the model</a></li>
+      <li><a href="#poly">Polymorphic reads</a></li>
+      <li><a href="#guidelines">Guidelines</a></li>
+    </ul>
+  </aside>
+  <main>
+    <div class="eyebrow">Chapter 4</div>
+    <h1>Modeling a domain</h1>
+    <p class="lead">This chapter models a small publishing domain twice, once as a TypeDB schema and once as Lean structures, and then lets the Lean side generate the TypeDB side.</p>
+
+    <h2 id="words">From words to types</h2>
+    <p>Start from how people describe the domain:</p>
+    <blockquote class="muted">People write books. Some people are authors with a pen name. Readers review books and give them a rating. An award goes to an author <em>for</em> a particular book.</blockquote>
+    <p>Sort the words into TypeDB's three kinds:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Word</th><th>Kind</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>person, book</td><td>entity</td><td>exist on their own</td></tr>
+        <tr><td>author</td><td>entity, <code>sub person</code></td><td>a person with more facts (a pen name)</td></tr>
+        <tr><td>write</td><td>relation <code>authorship</code> with roles <code>author</code>, <code>work</code></td><td>a verb that connects things</td></tr>
+        <tr><td>review</td><td>relation with roles <code>reviewer</code>, <code>subject</code>, owning <code>rating</code></td><td>connects a person and a book, and has its own data</td></tr>
+        <tr><td>award … for a book</td><td>relation whose <code>winner</code> is an <em>authorship</em></td><td>the award is about a fact, not about a person alone</td></tr>
+        <tr><td>email, name, isbn, title, year, genre, rating, prize</td><td>attributes</td><td>values</td></tr>
+      </tbody>
+    </table></div>
+    <p>Two choices here are worth noticing. "Author" could be a role (someone is an author <em>of</em> something) or a type (someone <em>is</em> an author). It is both: <code>author</code> is a subtype of <code>person</code> because it carries a pen name, and <code>authorship:author</code> is the role any person plays when they write something. The award is the second choice. Giving it to the person loses which book it was for, and giving it to the book loses who won it. The thing that wins is the authorship.</p>
+
+    <h2 id="entities">Entities as structures</h2>
+    <p>In typedb-lean, a structure with <code>deriving Entity</code> is an entity type. Fields are attributes it owns, and the field's Lean type decides the cardinality:</p>
+    <pre><code class="lang-lean">import TypeDB
+open TypeDB
+
+@[typedb "person"]
+structure Person where
+  email : Key String
+  name : String
+  deriving Repr, Entity
+
+structure Book where
+  isbn : Key String
+  title : String
+  year : Option Int64 := none
+  genres : Attr "genre" (Array String) := #[]
+  deriving Repr, Entity</code></pre>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Field type</th><th>Schema</th></tr></thead>
+      <tbody>
+        <tr><td><code>Key String</code></td><td><code>owns email @key</code></td></tr>
+        <tr><td><code>String</code></td><td><code>owns name @card(1..1)</code>: exactly one</td></tr>
+        <tr><td><code>Option Int64</code></td><td><code>owns year</code>: zero or one</td></tr>
+        <tr><td><code>Array String</code></td><td><code>owns genre @card(0..)</code>: any number</td></tr>
+        <tr><td><code>Attr "genre" T</code></td><td>uses the attribute label <code>genre</code> instead of the field name</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>@[typedb "person"]</code> sets the type label. Without it, the label is the structure name in kebab-case, so <code>Book</code> becomes <code>book</code>. Lean does not accept attributes on structure fields, so the per-field markers <code>Key</code>, <code>Attr</code> and <code>Role</code> are written in the field types instead. They are transparent: a <code>Key String</code> <em>is</em> a <code>String</code>, and you build and read it as one.</p>
+
+    <h2 id="subtypes">Subtypes</h2>
+    <p>Lean's <code>extends</code> becomes TypeDB's <code>sub</code>:</p>
+    <pre><code class="lang-lean">structure Author extends Person where
+  penName : Attr "pen-name" (Option String) := none
+  deriving Repr, Entity</code></pre>
+    <p>An <code>Author</code> value has <code>email</code>, <code>name</code> and <code>penName</code>. In the database, an <code>author</code> instance is also a <code>person</code>: it is found by <code>match $p isa person;</code> and can play every role a person plays. A reference to an author converts to a reference to a person with <code>r.up</code>.</p>
+
+    <h2 id="relations">Relations and roles</h2>
+    <p>A structure with <code>deriving Relation</code> is a relation type. Fields of type <code>Role "name" (Ref T)</code> are role players, and every other field is an owned attribute:</p>
+    <pre><code class="lang-lean">structure Authorship where
+  author : Role "author" (Ref Person)
+  work : Role "work" (Ref Book)
+  deriving Repr, Relation
+
+structure Review where
+  reviewer : Role "reviewer" (Ref Person)
+  subject : Role "subject" (Ref Book)
+  rating : Int64
+  deriving Repr, Relation</code></pre>
+    <p><code>Ref T</code> is a typed reference to an instance of <code>T</code>, either by its IID or by its key (<code>Ref.key (α := Person) "ann@example.com"</code>). From <code>Role "author" (Ref Person)</code> the library derives both <code>relates author</code> on the relation and <code>person plays authorship:author</code>. Two fields may share a role name; a friendship has two <code>friend</code> fields, and their players are read back in order.</p>
+
+    <h2 id="reification">Relations in roles</h2>
+    <p>The award's winner is a reference to an <code>Authorship</code>, and that is all it takes for a relation to play a role:</p>
+    <pre><code class="lang-lean">structure Award where
+  winner : Role "winner" (Ref Authorship)
+  prize : String
+  deriving Repr, Relation</code></pre>
+    <p>In a property graph you would need an extra node to stand for the edge, or a second edge from the award to both the author and the book, with nothing to keep the two consistent. In TypeDB the authorship is already an instance, so it can play the role directly.</p>
+
+    <h2 id="schema">The generated schema</h2>
+    <p>A schema is a list of <code>TypeSpec</code>s. <code>Schema.defineText</code> returns the TypeQL it generates (or an error, if two mappings give one attribute different value types), and <code>Schema.defineTx</code> runs it in a schema transaction:</p>
+    <pre><code class="lang-lean">def schema : List TypeSpec :=
+  [TypeSpec.of Person, TypeSpec.of Author, TypeSpec.of Book,
+   TypeSpec.of Authorship, TypeSpec.of Review, TypeSpec.of Award]
+
+#eval match Schema.defineText schema with
+  | .ok text => IO.println text
+  | .error e => IO.eprintln e</code></pre>
+    <pre><code class="lang-typeql">define
+  attribute email, value string;
+  attribute name, value string;
+  attribute pen-name, value string;
+  attribute isbn, value string;
+  attribute title, value string;
+  attribute year, value integer;
+  attribute genre, value string;
+  attribute rating, value integer;
+  attribute prize, value string;
+  entity person, owns email @key, owns name @card(1..1);
+  entity author, sub person, owns pen-name;
+  entity book, owns isbn @key, owns title @card(1..1), owns year, owns genre @card(0..);
+  relation authorship, relates author, relates work;
+  relation review, relates reviewer, relates subject, owns rating @card(1..1);
+  relation award, relates winner, owns prize @card(1..1);
+  person plays authorship:author;
+  book plays authorship:work;
+  person plays review:reviewer;
+  book plays review:subject;
+  authorship plays award:winner;</code></pre>
+    <p>Compare it with the hand-written schema in <a href="02-typedb-basics.html#schema">chapter 2</a>. The structure is the same; the value types come from the Lean field types (<code>Int64</code> is <code>integer</code>, <code>String</code> is <code>string</code>), and every cardinality comes from <code>Option</code>, <code>Array</code> or a plain field. You can still write parts of a schema by hand, such as an abstract supertype or functions. The ORM only needs the types it maps to exist and agree. <code>Schema.verify!</code> checks that (<a href="05-types-everywhere.html#verify">chapter 5</a>).</p>
+
+    <h2 id="using">Using the model</h2>
+    <p>Inserts return typed references, which you pass on to relations:</p>
+    <pre><code class="lang-lean">def seed : Tx .write Unit := do
+  let ann ← Entity.insert { email := "ann@example.com", name := "Ann", penName := some "A. Graph" : Author }
+  let bob ← Entity.insert { email := "bob@example.com", name := "Bob" : Person }
+  let book ← Entity.insert { isbn := "978-1", title := "Typed Graphs", year := some 2026,
+                             genres := #["databases", "lean"] : Book }
+  let a ← Relation.insert { author := ann.up, work := book : Authorship }
+  discard &lt;| Relation.insert { reviewer := bob, subject := book, rating := 5 : Review }
+  discard &lt;| Relation.insert { winner := a, prize := "Best Typed Book" : Award }</code></pre>
+    <p><code>ann</code> is a <code>Ref Author</code>; the authorship wants a <code>Ref Person</code>, so <code>ann.up</code> converts it. Passing <code>ann</code> directly would be a type error, and passing a <code>Ref Book</code> as the author is a type error too. The mistakes TypeDB would reject at run time are caught when you compile. Reads, updates and deletes use the same references:</p>
+    <pre><code class="lang-lean">let ann := Ref.key (α := Person) "ann@example.com"
+Entity.update ann Person.field.name "Annie"      -- typed field handle
+let p? ← Entity.get? ann                          -- Option Person
+let awards ← Relation.all (α := Award)            -- Array (Ref Award × Award)</code></pre>
+
+    <h2 id="poly">Polymorphic reads</h2>
+    <p><code>Entity.all (α := Person)</code> returns every person, including authors, decoded as <code>Person</code>. When you want each instance as its most specific type, list the cases in an inductive type and derive <code>Polymorphic</code>:</p>
+    <pre><code class="lang-lean">inductive AnyPerson where
+  | person (p : Person)
+  | author (a : Author)
+  deriving Repr, Polymorphic
+
+for (_, p) in ← Polymorphic.all (α := AnyPerson) do
+  match p with
+  | .person p => IO.println s!"person {p.name}"
+  | .author a => IO.println s!"author {a.name} aka {a.penName}"</code></pre>
+    <pre><code class="lang-text">person Bob
+author Ann aka (some (A. Graph))</code></pre>
+    <p>The first constructor's type is the root that is queried. Each instance decodes into the constructor for its own type, or into the first constructor if its type is not listed. Because the match on <code>p</code> must cover every constructor, adding a subtype to <code>AnyPerson</code> makes the compiler point at every place that needs to handle it.</p>
+
+    <h2 id="guidelines">Guidelines</h2>
+    <ul>
+      <li><strong>Name relations after the fact, roles after the participation.</strong> <code>authorship</code> with <code>author</code> and <code>work</code> reads better in queries than <code>writes</code> with <code>from</code> and <code>to</code>.</li>
+      <li><strong>Use a subtype when a thing has more facts, a role when it takes part in something.</strong> An author has a pen name; a reviewer is just a person in a review.</li>
+      <li><strong>Reify when a statement is itself the subject of another statement.</strong> Awards, endorsements, provenance and corrections are often about a relation, not about its players.</li>
+      <li><strong>Prefer keys for anything users refer to.</strong> <code>Ref.key</code> lets you refer to an instance without first looking up its IID.</li>
+      <li><strong>Let the cardinality be visible in the Lean type.</strong> An <code>Option</code> field reads as "may be missing" everywhere it is used, and the schema says the same.</li>
+    </ul>
+
+    <div class="callout book">
+      <strong>To learn more</strong>
+      <p>Modeling knowledge with entities, relations and roles, including reification and hyper-relations for agent memory, is a central topic of <a href="https://leanpub.com/typedbforedgeaiagents"><em>TypeDB for Edge AI Agents</em></a> and of <a href="https://leanpub.com/metagraphforaiagents"><em>Metagraph for AI Agents</em></a>.</p>
+    </div>
+
+    <nav class="pager"><a class="prev" href="03-lean-basics.html"><small>Previous</small>3. Just enough Lean</a><a class="next" href="05-types-everywhere.html"><small>Next</small>5. Types everywhere</a></nav>
+  </main>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>
