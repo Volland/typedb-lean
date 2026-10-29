@@ -1,0 +1,68 @@
+# Build, unit and integration tests on every supported platform.
+# Linux runners run the integration tests against a typedb/typedb container (started by
+# `lake test`); GitHub's macOS runners cannot run Linux containers, so macOS runs build and
+# unit tests only. Linux x86_64 also runs the benchmark smoke check.
+#
+# Checked by the unit test "native: CI matrix covers every platform".
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            integration: true
+            bench: true
+          - os: ubuntu-24.04-arm
+            integration: true
+            bench: false
+          - os: macos-14
+            integration: false
+            bench: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Pinned TypeDB version
+        id: pin
+        run: echo "version=$(lake run typedb-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .lake/build/typedb-driver
+          key: driver-${{ matrix.os }}-${{ steps.pin.outputs.version }}
+
+      - name: Build
+        run: lake build
+
+      - name: Unit tests
+        if: ${{ !matrix.integration }}
+        run: lake test -- --unit
+
+      - name: Native override checks
+        run: scripts/test-native-override.sh
+
+      - name: Unit and integration tests
+        if: ${{ matrix.integration }}
+        run: lake test
+
+      - name: Benchmark smoke
+        if: ${{ matrix.bench }}
+        run: lake exe bench --ci

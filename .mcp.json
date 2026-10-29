@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tg": {
+      "command": "tg",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

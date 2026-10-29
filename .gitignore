@@ -1,0 +1,6 @@
+/.lake/
+/bench/rust/target/
+/bench/report.json
+.DS_Store
+/docbuild/.lake/
+/.omc/

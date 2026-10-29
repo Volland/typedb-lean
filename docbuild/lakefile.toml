@@ -1,0 +1,16 @@
+# API docs with doc-gen4, kept out of the main package so that users of the library do not
+# download doc-gen4:  cd docbuild && lake build TypeDB:docs
+# The HTML lands in docbuild/.lake/build/doc.
+name = "docbuild"
+reservoir = false
+version = "0.1.0"
+packagesDir = "../.lake/packages"
+
+[[require]]
+name = "typedb-lean"
+path = "../"
+
+[[require]]
+scope = "leanprover"
+name = "doc-gen4"
+rev = "v4.35.0"

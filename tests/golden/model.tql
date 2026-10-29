@@ -1,0 +1,16 @@
+define
+  attribute email, value string;
+  attribute name, value string;
+  attribute age, value integer;
+  attribute tags, value string;
+  attribute company, value string;
+  attribute salary, value decimal;
+  attribute since, value integer;
+  attribute note, value string;
+  entity person, owns email @key, owns name @card(1..1), owns age, owns tags @card(0..);
+  entity employee, sub person, owns company @card(1..1), owns salary @card(1..1);
+  relation friendship, relates friend @card(0..2), owns since @card(1..1);
+  relation endorsement, relates endorsed, relates endorser, owns note;
+  person plays friendship:friend;
+  friendship plays endorsement:endorsed;
+  person plays endorsement:endorser;

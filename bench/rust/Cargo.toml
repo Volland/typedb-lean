@@ -1,0 +1,13 @@
+# The same workloads as bench/Bench.lean, on the official Rust driver at the pinned version.
+# The version must equal TYPEDB_VERSION (checked by the unit tests).
+[package]
+name = "typedb-lean-bench-rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+typedb-driver = { version = "=3.14.0", features = ["sync"] }
+
+[profile.release]
+opt-level = 3
