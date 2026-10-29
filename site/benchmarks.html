@@ -129,7 +129,7 @@ discard &lt;| (EAsync.concurrentlyAll ((Array.range 16).map fun _ =>
       <li>the scan reaches at least <b>80%</b> of the Rust driver's rows per second, and</li>
       <li>the lookup p50 is at most <b>1.1×</b> the Rust driver's.</li>
     </ul>
-    <p>CI runs <code>lake exe bench --ci</code> on Linux x86_64 on every push: 20,000 rows, 300 lookups and 2,000 inserts, with the targets relaxed by another 10% for shared runners.</p>
+    <p>CI runs <code>lake exe bench --ci</code> on Linux x86_64 for pushes to <code>main</code> and pull requests: 20,000 rows, 300 lookups and 2,000 inserts, with the targets relaxed by another 10% for shared runners.</p>
 
     <h2 id="reproduce">Reproduce</h2>
     <p>You need Docker, a Rust toolchain and <code>protoc</code>. Without <code>TYPEDB_ADDRESS</code>, the benchmark starts a <code>typedb/typedb</code> container at the pinned version and removes it afterwards.</p>

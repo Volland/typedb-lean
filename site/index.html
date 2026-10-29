@@ -407,7 +407,7 @@ example (v : Secret) : Query .read := typeql!"match $p has id {v};"</code></pre>
       <div class="reveal">
         <div class="eyebrow">Performance</div>
         <h2 style="margin-top:0">As fast as the official Rust driver</h2>
-        <p>Same workloads, same server, same driver version. A decoder knows its columns, so one native call returns hundreds of rows at a time. The benchmark runs in CI and fails if the scan drops below 80% of Rust's throughput.</p>
+        <p>Same workloads, same server, same driver version. A decoder knows its columns, so one native call returns hundreds of rows at a time. The full benchmark fails if the scan drops below 80% of Rust's throughput, and CI runs a smaller version with the targets relaxed by 10%.</p>
         <a class="btn" href="benchmarks.html">See the full benchmark →</a>
       </div>
       <div class="bench reveal">

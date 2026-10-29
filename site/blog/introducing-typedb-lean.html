@@ -79,7 +79,7 @@ def main : IO Unit := do
   </tbody>
 </table>
 </div>
-<p>Two things make that possible: rows are decoded in batches, many per native call, and the server streams answers ahead of the client. The benchmark is part of CI and fails if scans fall below 80% of the Rust driver's throughput, or the lookup p50 rises above 1.1×. The <a href="../benchmarks.html">benchmarks page</a> has the workloads, the method and the caveats.</p>
+<p>Two things make that possible: rows are decoded in batches, many per native call, and the server streams answers ahead of the client. The full benchmark fails if scans fall below 80% of the Rust driver's throughput, or the lookup p50 rises above 1.1×. CI runs a smaller version on pushes to main and on pull requests, with those targets relaxed to 70% and 1.2× for shared runners. The <a href="../benchmarks.html">benchmarks page</a> has the workloads, the method and the caveats.</p>
 
 <h2 id="install">Install</h2>
 <p>Add the package to your <code>lakefile.lean</code>:</p>
