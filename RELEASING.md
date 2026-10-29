@@ -22,7 +22,7 @@ typedb-lean is a Lean package, distributed as source: users `require` it from Gi
    git push origin main vX.Y.Z
    ```
 
-5. `release.yaml` verifies the tag and publishes the release. If a draft release for the tag already exists, it publishes that draft with the changelog notes.
+5. `release.yaml` verifies the tag and publishes the release. If a draft release for the tag already exists, it publishes that draft and keeps its notes; otherwise it creates the release with the changelog section as notes.
 
 ## Bumping TypeDB
 
