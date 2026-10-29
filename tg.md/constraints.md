@@ -76,3 +76,9 @@ The driver brackets its own error codes, the server rejects unknown type labels 
 - constrains:: [[decisions#Typed errors and opt-in retry]] {strength: must, source: "typedb-driver 3.14 and server 3.14"}
 - constrains:: [[decisions#Precise value types]] {strength: must, source: "typedb-driver 3.14"}
 - constrains:: [[decisions#Thin bindings and a batched hot path]] {strength: should, source: "typedb-driver 3.14", note: "default prefetch 512"}
+
+## Protobuf compiler at build time
+
+The driver's protocol crate compiles TypeDB's protobuf definitions while cargo builds it, so building needs `protoc` (or `PROTOC`); a clean Linux machine has none.
+
+- constrains:: [[decisions#Pinned source build]] {strength: must, source: "typedb-protocol 3.14.0 build script", note: "the lakefile checks for protoc before running cargo; CI installs it"}

@@ -146,3 +146,12 @@ On macOS the build links CoreFoundation and Security through minimal TAPI stubs 
 - motivated_by:: [[decisions#Benchmarks against the Rust driver]] {weight: secondary, note: "the benchmarks page reports its results"}
 
 Shared header, footer and code highlighting come from `site/assets/site.js`. Lean snippets on the site that are not copied from the guide or the example are compile-checked against the library before publishing. Rejected: a static site generator, which would add a toolchain to CI for a handful of pages.
+
+## Releases from version tags
+
+A release is a tag `vX.Y.Z` on `main`. `release.yaml` checks it against the lakefile and changelog, runs the tests and the benchmark, and publishes the GitHub release.
+
+- motivated_by:: [[decisions#Pinned source build]] {weight: secondary, note: "Lean packages ship as source; Lake users and Reservoir consume the tag"}
+- part_of:: [[capabilities#native-driver]]
+
+`scripts/check-versions.sh` keeps the lakefile version, the newest changelog entry and the tag in agreement. A prepared draft release keeps its notes when the tag publishes it. Rejected: publishing build artifacts, since Lake builds from source and the driver from its pinned tag.
