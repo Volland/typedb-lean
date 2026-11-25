@@ -4,6 +4,10 @@ All notable changes to typedb-lean. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Changed
+
+- Lean toolchain `v4.37.0-rc1` (was `v4.35.0`); doc-gen4 `v4.37.0-rc1` for the API docs. No source changes were needed.
+
 ## [0.1.0] - 2026-10-29
 
 First release: a TypeDB 3 client for Lean 4 over the official C driver (typedb-driver 3.14.0), for Lean `v4.35.0`.
